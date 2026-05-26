@@ -22,6 +22,6 @@ Contains all files for the compiler program of Group 7 for final output requirem
 ## Members (Group 5)
 
 * Gem Eirien A. Capistrano
-* Joseph Cinco
+* Joseph Christian C. Cinco
 * John Michael A. Kamantigue
 * Justine Nicol D. Lagajino

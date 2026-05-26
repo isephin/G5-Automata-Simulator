@@ -2,11 +2,6 @@
 
 Contains all files for the compiler program of Group 7 for final output requirements
 
-## Tech Stack
-
-* **Backend:** Python / Flask (Handles DFA logic and trace calculations)
-* **Frontend:** Vanilla JavaScript, HTML5, CSS3 (Handles physics engine, DOM manipulation, and UI)
-
 ## How to Run Locally
 
 1. **Clone the repository:**

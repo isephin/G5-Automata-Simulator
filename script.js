@@ -474,7 +474,7 @@ window.openModal = function(type) {
             <p style="margin-bottom: 8px;"><b>Members:</b></p>
             <p>Gem Eirien A. Capistrano</p>
             <p>Joseph Cinco</p>
-            <p>John Michael A. Kamantigue</p>
+            <p>John Michael D. Kamantigue</p>
             <p>Justine Nicol D. Lagajino</p>
           </div>
       `;

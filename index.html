@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Retro Automata Simulator</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="machine">
+  
+  <div class="top-left">
+    <div class="regex-screen" id="regex-display">Loading...</div>
+
+    <div class="type-buttons">
+      <button id="btn-DFA" class="type-btn active" onclick="setMode('DFA')">DFA</button>
+      <button id="btn-PDA" class="type-btn" onclick="setMode('PDA')">PDA</button>
+      <button id="btn-CFG" class="type-btn" onclick="setMode('CFG')">CFG</button>
+    </div>
+  </div>
+
+  <div class="top-right">
+    <div class="controls-top-row">
+      <div class="switch-container">
+        Change regex
+        <label class="switch">
+          <input type="checkbox" onchange="toggleDFA()">
+          <span class="slider"></span>
+        </label>
+      </div>
+    <button class="small-btn" onclick="openModal('manual')">Usage Manual</button>
+      <button class="small-btn" onclick="openModal('about')">About</button>
+    </div>
+    <div class="input-row">
+      <span class="input-label">Enter Strings</span>
+      <span class="machine-badge">G5-BCS34</span>
+    </div>
+    <input type="text" id="str-input" placeholder="Type here and press Enter..." autocomplete="off" spellcheck="false" />
+  </div>
+
+  <div class="diagram-wrapper">
+    <div class="diagram-screen">
+      <div class="diagram-title" id="diagram-title-text">Deterministic Finite Automaton (DFA)</div>
+      <svg id="automaton" viewBox="0 0 900 460" preserveAspectRatio="xMidYMid meet"></svg>
+      <div id="error-msg"></div>
+    </div>
+  </div>
+
+  <div class="list-wrapper">
+    <div class="board-header-row">
+      <div class="hdr-valid">Valid</div>
+      <div class="hdr-invalid">Invalid</div>
+      <div class="hdr-strings">Strings:</div>
+      <div class="hdr-sim">Simulate</div>
+    </div>
+    <div id="dynamic-list"></div>
+  </div>
+
+  <div class="bottom-left-area">
+    <div class="mode-leds">
+      <div class="mode-led-group"><div id="led-DFA" class="led led-green"></div><span>DFA</span></div>
+      <div class="mode-led-group"><div id="led-PDA" class="led"></div><span>PDA</span></div>
+      <div class="mode-led-group"><div id="led-CFG" class="led"></div><span>CFG</span></div>
+    </div>
+    <div class="log-screen" id="trace-log">
+      — Waiting for input —
+    </div>
+  </div>
+
+</div>
+
+<div id="cute-modal" class="modal-overlay">
+  <div class="modal-box">
+    <h2 id="modal-title" class="modal-title">Title</h2>
+    <div id="modal-content" class="modal-content">Content goes here</div>
+    <button class="modal-close-btn" onclick="closeModal()">Got it!</button>
+  </div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>

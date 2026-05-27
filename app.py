@@ -108,7 +108,7 @@ DFAS = {
             {"from": "second_end_state", "to": "second_end_state", "label": "b"},
             {"from": "second_end_state", "to": "q7", "label": "a"},
         ],
-        "samples": ["aab", "ab", "bab", "ba", "b", "ababab"],
+        "samples": ["bbabbaa", "abababb", "bbabaaa", "bbabbbaa", "babbbabbaa", "aababbb"],
     },
     "DFA 2": {
         "description": "(1|0)*(11|00)(00|11)*(1|0|11)(1|0|11)*(101|111)(101|111)*(1|0*|11)(1|0*|11)",
@@ -167,14 +167,14 @@ DFAS = {
             {"from": "q11", "to": "q7", "label": "1"},
 
             {"from": "q12", "to": "q11", "label": "0"},
-            {"from": "q12", "to": "q3", "label": "1"},
+            {"from": "q12", "to": "q13", "label": "1"},
 
             {"from": "q13", "to": "q13", "label": "0"},
             {"from": "q13", "to": "q13", "label": "1"},
 
 
         ],
-        "samples": ["aa", "bab", "aabb", "a", "bb", "aaa"],
+        "samples": ["11110111", "00011111", "111110111", "011110111", "111101111", "00010110111"],
     }
 }
 
@@ -203,17 +203,24 @@ def run_dfa(dfa_def, input_string):
                 "dead": True,
                 "dead_at": i,
                 "final_state": current,
+                "verdict": f'✗ REJECTED — "{input_string}" is not in the language',
             }
         current = trans_map[key]
         trace.append({"state": current, "char_index": i, "symbol": ch})
 
     is_accept = next(s["accept"] for s in dfa_def["states"] if s["id"] == current)
+    verdict = (
+        f'✓ ACCEPTED — "{input_string}" is in the language'
+        if is_accept
+        else f'✗ REJECTED — "{input_string}" is not in the language'
+    )
     return {
         "trace": trace,
         "accepted": is_accept,
         "dead": False,
         "dead_at": None,
         "final_state": current,
+        "verdict": verdict,
     }
 
 
@@ -247,7 +254,7 @@ CFGS = {
         ],
     },
     "DFA 2": {
-        "regex": "(1+0)*(11+00)(00+11)*(1+0+11)(1+0+11)*(101+111)(101+111)*(1+0*+11)(1+0*+11)",
+        "regex": "(1+0)*(11+00)(00+11)*(1+0+11)(1+0+11)*(101+111)(101+111)*(1+0+11)(1+0+11)",
         "alphabet": ["0", "1"],
         "samples": [
             "11110111",    # Z=ε  Y=11  X=ε  W=1  V=ε  U=101  T=ε  R=11
@@ -269,8 +276,8 @@ CFGS = {
             {"lhs": "V",   "rhs": ["1 V", "0 V", "11 V", "\u039b"]},
             {"lhs": "U",   "rhs": ["101", "111"]},
             {"lhs": "T",   "rhs": ["101 T", "111 T", "\u039b"]},
-            {"lhs": "R",   "rhs": ["1 R'", "0* R'", "11 R'"]},
-            {"lhs": "R'",  "rhs": ["1 R''", "0* R''", "11 R''"]},
+            {"lhs": "R",   "rhs": ["1 R'", "0 R'", "11 R'"]},
+            {"lhs": "R'",  "rhs": ["1 R''", "0 R''", "11 R''"]},
             {"lhs": "R''", "rhs": ["\u039b"]},
         ],
     },
@@ -284,10 +291,12 @@ def list_dfas():
     """Return all available DFA keys and their metadata."""
     result = {}
     for key, dfa in DFAS.items():
+        samples = dfa.get("samples", [])
         result[key] = {
             "description": dfa["description"],
             "alphabet": dfa["alphabet"],
-            "samples": dfa["samples"],
+            "samples": samples,
+            "test_strings": samples,   # all sample strings to run at launch
             "states": dfa["states"],
             "transitions": dfa["transitions"],
         }
@@ -371,7 +380,11 @@ def derive_cfg(cfg_def, input_string):
     The input is kept as a plain string; terminals are matched as substrings
     so multi-char terminals like 'bab', 'aa', '101' work correctly.
 
-    Returns {accepted, steps[], input}.
+    For ACCEPTED strings: returns full leftmost derivation steps.
+    For REJECTED strings: returns partial animation steps showing how far
+    the grammar can match before failing, so the frontend can animate the attempt.
+
+    Returns {accepted, steps[], input, verdict}.
     Each step: {step_num, sentential, rule_lhs, rule_rhs, after}
     """
     LAMBDA = "\u039b"
@@ -394,15 +407,18 @@ def derive_cfg(cfg_def, input_string):
     #   consumed_str = portion of s matched by symbols
     # ------------------------------------------------------------------
 
-    # Cache: (var, s) -> True/False  (cache both to avoid re-exploring)
+    # Cache: (var, s) -> node | None  (cache both to avoid re-exploring)
     pos_cache = {}
 
     def match(var, s, depth=0):
-        if depth > 100:
+        if depth > 80:
             return None
         key = (var, s)
         if key in pos_cache:
             return pos_cache[key]
+
+        # Mark in-progress to break left-recursion / infinite loops
+        pos_cache[key] = None
 
         for prod in grammar.get(var, []):
             result = match_seq(prod, s, depth)
@@ -413,15 +429,12 @@ def derive_cfg(cfg_def, input_string):
                     pos_cache[key] = node
                     return node
 
-        pos_cache[key] = None     # cache failure only after trying ALL productions
         return None
 
     def match_seq(symbols, s, depth):
         """
         Returns (total_consumed, children) if symbols can derive a prefix of s,
         consuming exactly len(total_consumed) characters and leaving nothing.
-        Because we require full consumption at the top level, we thread the
-        remaining string and demand it be empty when symbols run out.
         """
         return _seq(symbols, s, depth, [])
 
@@ -443,7 +456,9 @@ def derive_cfg(cfg_def, input_string):
             return None
         else:
             # Variable: try every possible split of remaining
-            for split in range(len(remaining) + 1):
+            # Limit splits to avoid exponential blow-up on long inputs
+            max_split = min(len(remaining), len(input_string)) + 1
+            for split in range(max_split):
                 prefix = remaining[:split]
                 node = match(sym, prefix, depth + 1)
                 if node is not None:
@@ -456,8 +471,71 @@ def derive_cfg(cfg_def, input_string):
 
     # ── Run parser ────────────────────────────────────────────────────
     root = match("S", input_string)
+
     if root is None:
-        return {"accepted": False, "steps": [], "input": input_string}
+        # --- Build partial animation steps for rejected strings ---
+        # Show a best-effort derivation: try each production of S greedily
+        # and show as many expansion steps as we can before giving up.
+        partial_steps = []
+        step_num = [0]
+
+        def try_partial_expand(var, form, pos, depth=0):
+            """Expand var at pos using the first production that matches any prefix."""
+            if depth > 30 or step_num[0] >= 40:
+                return form
+            prods = grammar.get(var, [])
+            best_prod = prods[0] if prods else []  # default: pick first production
+            # Try to find a prod that matches even a prefix of remaining input
+            remaining = "".join(ch for sym in form[pos+1:] if sym not in variables for ch in [sym])
+            for prod in prods:
+                if not prod:  # epsilon
+                    best_prod = prod
+                    break
+                # Check if first terminal of prod matches current input position
+                first_term = next((s for s in prod if s not in variables), None)
+                if first_term:
+                    consumed_so_far = len("".join(
+                        s for s in form[:pos] if s not in variables
+                    ))
+                    if input_string[consumed_so_far:consumed_so_far + len(first_term)] == first_term:
+                        best_prod = prod
+                        break
+
+            rhs_str = " ".join(best_prod) if best_prod else LAMBDA
+            new_form = form[:pos] + best_prod + form[pos + 1:]
+
+            step_num[0] += 1
+            partial_steps.append({
+                "step_num":   step_num[0],
+                "sentential": " ".join(form) if form else LAMBDA,
+                "rule_lhs":   var,
+                "rule_rhs":   rhs_str,
+                "after":      " ".join(new_form) if new_form else LAMBDA,
+            })
+
+            # Recurse into variables in new_form left-to-right
+            cur_form = new_form
+            offset = pos
+            for sym in best_prod:
+                if sym in variables and step_num[0] < 40:
+                    try_partial_expand(sym, cur_form, offset, depth + 1)
+                    # Rebuild cur_form: replace var at offset with its first production
+                    sub_prod = grammar.get(sym, [[]])[0]
+                    cur_form = cur_form[:offset] + sub_prod + cur_form[offset + 1:]
+                    offset += max(len(sub_prod), 1)
+                else:
+                    offset += 1
+            return cur_form
+
+        try_partial_expand("S", ["S"], 0)
+
+        verdict = f'\u2717 REJECTED \u2014 "{input_string}" is not in the language'
+        return {
+            "accepted": False,
+            "steps": partial_steps,
+            "input": input_string,
+            "verdict": verdict,
+        }
 
     # ── Flatten parse tree → leftmost derivation steps ───────────────
     # sentential form is a list of symbol-strings (vars or terminals)
@@ -500,7 +578,13 @@ def derive_cfg(cfg_def, input_string):
 
     flatten("S", input_string, root, ["S"], 0)
 
-    return {"accepted": True, "steps": steps, "input": input_string}
+    verdict = f'\u2713 ACCEPTED \u2014 "{input_string}" is in the language'
+    return {
+        "accepted": True,
+        "steps": steps,
+        "input": input_string,
+        "verdict": verdict,
+    }
 
 
 @app.route("/api/cfgs", methods=["GET"])
@@ -508,12 +592,16 @@ def list_cfgs():
     """Return all CFG definitions (rules + metadata)."""
     result = {}
     for key, cfg in CFGS.items():
+        samples = cfg.get("samples", [])
+        invalid_samples = cfg.get("invalid_samples", [])
         result[key] = {
             "regex":           cfg["regex"],
             "alphabet":        cfg["alphabet"],
             "rules":           cfg["rules"],
-            "samples":         cfg.get("samples", []),
-            "invalid_samples": cfg.get("invalid_samples", []),
+            "samples":         samples,
+            "invalid_samples": invalid_samples,
+            # Combined list for launch-time animation: valid strings first, then invalid
+            "test_strings":    samples + invalid_samples,
         }
     return jsonify(result)
 

@@ -35,7 +35,24 @@ async function boot() {
     const res = await fetch(API + '/dfas');
     dfas = await res.json();
     dfaKeys = Object.keys(dfas);
-    selectDfa(dfaKeys[0], false); 
+    selectDfa(dfaKeys[0], false);
+
+    // Pre-load CFG samples so they appear immediately on launch
+    const ok = await loadCfgs();
+    if (ok) {
+      const key = currentId || Object.keys(cfgs)[0];
+      const cfg = cfgs[key];
+      if (cfg && cfg.samples && cfg.samples.length > 0) {
+        const isEmpty = listData.every(d => d.text === '');
+        if (isEmpty) {
+          listData = Array(6).fill(null).map((_, i) => ({
+            text: cfg.samples[i] || '', status: null
+          }));
+          activeIndex = -1;
+          renderList();
+        }
+      }
+    }
   } catch (e) {
     showError('Cannot reach Python Flask. Make sure app.py is running!');
   }
@@ -395,7 +412,7 @@ function selectDfa(id, keepList = false) {
   resetViewport();
   const dfa = dfas[currentId];
   
-  let regexStr = dfa.description.replace(/\*/g, "'").replace(/\|/g, "+");
+  let regexStr = dfa.description.replace(/\|/g, "+");
   regexStr = regexStr.replace(/\(/g, '<wbr>(').replace(/\)/g, ')<wbr>');
   document.getElementById('regex-display').innerHTML = regexStr;
   
@@ -420,19 +437,38 @@ window.toggleDFA = function() {
   if (dfaKeys.length === 0) return;
   let idx = dfaKeys.indexOf(currentId);
   idx = (idx + 1) % dfaKeys.length;
-  selectDfa(dfaKeys[idx], false);
   if (currentMode === 'CFG') {
-    drawCFG().then(() => {
-      const key = currentId || Object.keys(cfgs)[0];
+    // In CFG mode: update currentId first, then load samples, then redraw
+    selectDfa(dfaKeys[idx], true);  // sets currentId, keeps listData
+    // loadCfgs() is cached after first call — await it to be safe
+    loadCfgs().then(() => {
+      const key = dfaKeys[idx];
       const cfg = cfgs[key];
       if (cfg && cfg.samples) {
         listData = Array(6).fill(null).map((_, i) => ({
           text: cfg.samples[i] || '', status: null
         }));
-        activeIndex = -1;
-        renderList();
+      } else {
+        listData = Array(6).fill(null).map(() => ({ text: '', status: null }));
       }
+      activeIndex = -1;
+      renderList();        // show samples immediately, don't wait for drawCFG
+      drawCFG();           // redraw grammar diagram in background
     });
+  } else {
+    // Switch to the new DFA/PDA, but preserve or replace list with samples
+    const newId = dfaKeys[idx];
+    selectDfa(newId, true);  // keepList=true so selectDfa won't wipe it
+    const dfa = dfas[newId];
+    if (dfa && dfa.samples && dfa.samples.length > 0) {
+      listData = Array(6).fill(null).map((_, i) => ({
+        text: dfa.samples[i] || '', status: null
+      }));
+    } else {
+      listData = Array(6).fill(null).map(() => ({ text: '', status: null }));
+    }
+    activeIndex = -1;
+    renderList();
   }
 }
 
@@ -510,11 +546,51 @@ document.getElementById('str-input').addEventListener('keydown', e => {
     const val = e.target.value;
     if (val.trim() === "") return;
     listData.unshift({ text: val, status: null });
-    listData.pop(); 
-    activeIndex = -1; 
-    e.target.value = ""; 
+    listData.pop();
+    activeIndex = -1;
+    e.target.value = "";
+    e.target.style.borderColor = '';
+    e.target.style.boxShadow  = '';
     renderList();
   }
+});
+
+// Live CFG input validation (green / red border as you type)
+let _cfgLiveTimer = null;
+document.getElementById('str-input').addEventListener('input', e => {
+  const input = e.target;
+  const val   = input.value;
+  if (currentMode !== 'CFG') {
+    input.style.borderColor = '';
+    input.style.boxShadow   = '';
+    return;
+  }
+  if (val === '') {
+    input.style.borderColor = '';
+    input.style.boxShadow   = '';
+    return;
+  }
+  clearTimeout(_cfgLiveTimer);
+  _cfgLiveTimer = setTimeout(async () => {
+    const key = currentId || Object.keys(cfgs)[0];
+    try {
+      const res = await fetch(API + '/cfg/validate', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ cfg_id: key, input: val })
+      });
+      if (!res.ok) return;
+      const result = await res.json();
+      if (input.value !== val) return;
+      if (result.accepted) {
+        input.style.borderColor = '#237804';
+        input.style.boxShadow   = '0 0 0 2px rgba(35,120,4,0.25)';
+      } else {
+        input.style.borderColor = '#ff4d4f';
+        input.style.boxShadow   = '0 0 0 2px rgba(255,77,79,0.25)';
+      }
+    } catch (_) {}
+  }, 350);
 });
 
 // ════════════════════════════════════════════
@@ -556,7 +632,16 @@ window.handleSimulate = async function(index) {
       clearInterval(animTimer);
       showResult();
       listData[index].status = traceData.accepted ? 'valid' : 'invalid';
-      renderList(); 
+      renderList();
+      const logEl = document.getElementById('trace-log');
+      const finalLine = document.createElement('div');
+      finalLine.className = 'log-step cur';
+      finalLine.style.color = traceData.accepted ? '#237804' : '#ff4d4f';
+      finalLine.innerHTML = traceData.accepted
+        ? `<b>✓ ACCEPTED</b> — "${inputString}" is in the language`
+        : `<b>✗ REJECTED</b> — "${inputString}" is not in the language`;
+      logEl.appendChild(finalLine);
+      finalLine.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }, 600);
 }

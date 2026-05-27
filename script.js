@@ -115,25 +115,11 @@ async function drawCFG(highlightLhs = null, highlightRhs = null) {
   defs.appendChild(filt);
   svg.appendChild(defs);
 
-  // ── REGEX banner ─────────────────────────────────────────────────────
-  const BW = 880, BH = 40, BX = 10, BY = 6;
-  svg.appendChild(mk('rect', { x:BX, y:BY, width:BW, height:BH, rx:4,
-    fill:'#ffcc80', stroke:'#d1cbbd', 'stroke-width':'2', filter:'url(#inset-sh)' }));
-  svg.appendChild(mk('rect', { x:BX+1, y:BY+1, width:BW-2, height:BH-2, rx:3,
-    fill:'none', stroke:'rgba(255,255,255,0.55)', 'stroke-width':'1.5' }));
-
-  const rawRegex = cfg.regex.replace(/\*/g, "'").replace(/\|/g, '+');
-  const alphabet = '\u03a3 = {' + cfg.alphabet.join(', ') + '}';
-  svg.appendChild(mk('text', {
-    x: BX+14, y: BY+BH/2, 'dominant-baseline':'central',
-    'font-family':'Courier Prime, monospace', 'font-size':'13',
-    'font-weight':'bold', fill:'#4a3b2c'
-  }, `REGEX: ${rawRegex}    ${alphabet}`));
-
   // ── Single-column production rules ──────────────────────────────────
   const rules   = cfg.rules;
   const ROW_H   = 36;
-  const TOP     = BY + BH + 8;
+  const TOP     = 8;
+  const BX      = 10;
   const CARD_PAD = 10;
   const COL_W   = 880;
   const CHAR_W  = 9.6;

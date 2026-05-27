@@ -41,6 +41,331 @@ async function boot() {
   }
 }
 
+// ════════════════════════════════════════════
+// CFG — fetched from Flask, cached here
+// ════════════════════════════════════════════
+let cfgs = {};
+let cfgTrace    = null;   // derivation steps from /api/cfg/validate
+let cfgAnimStep = -1;
+let cfgAnimTimer = null;
+
+async function loadCfgs() {
+  if (Object.keys(cfgs).length > 0) return true;
+  try {
+    const res = await fetch(API + '/cfgs');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    cfgs = await res.json();
+    return true;
+  } catch (e) {
+    showError('Cannot load CFGs from Flask: ' + e.message);
+    return false;
+  }
+}
+
+function resetCfgAnim() {
+  clearInterval(cfgAnimTimer);
+  cfgTrace    = null;
+  cfgAnimStep = -1;
+}
+
+// ════════════════════════════════════════════
+// CFG Renderer — single column, top-to-bottom
+// ════════════════════════════════════════════
+async function drawCFG(highlightLhs = null, highlightRhs = null) {
+  const ok = await loadCfgs();
+  if (!ok) return;
+
+  const key = currentId || Object.keys(cfgs)[0];
+  const cfg = cfgs[key];
+  if (!cfg) { showError('No CFG found for ' + key); return; }
+
+  const svg = document.getElementById('automaton');
+  svg.innerHTML = '';
+  svg.setAttribute('viewBox', '0 0 900 460');
+  hideError();
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const mk = (tag, attrs, txt) => {
+    const el = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    if (txt !== undefined) el.textContent = txt;
+    return el;
+  };
+
+  // ── defs ────────────────────────────────────────────────────────────
+  const defs = mk('defs', {});
+  const cardGrad = mk('linearGradient', { id:'cfg-card', x1:'0', y1:'0', x2:'0', y2:'1' });
+  cardGrad.appendChild(mk('stop', { offset:'0%',   'stop-color':'#fdfcfb' }));
+  cardGrad.appendChild(mk('stop', { offset:'100%', 'stop-color':'#f4f1ea' }));
+  defs.appendChild(cardGrad);
+
+  const activeGrad = mk('linearGradient', { id:'cfg-active', x1:'0', y1:'0', x2:'0', y2:'1' });
+  activeGrad.appendChild(mk('stop', { offset:'0%',   'stop-color':'#fff8ee' }));
+  activeGrad.appendChild(mk('stop', { offset:'100%', 'stop-color':'#ffe0a0' }));
+  defs.appendChild(activeGrad);
+
+  const filt = mk('filter', { id:'inset-sh', x:'-5%', y:'-5%', width:'110%', height:'110%' });
+  const feF = mk('feFlood',       { 'flood-color':'rgba(0,0,0,0.15)', result:'f' });
+  const feC = mk('feComposite',   { in:'f', in2:'SourceGraphic', operator:'in', result:'s' });
+  const feB = mk('feGaussianBlur',{ in:'s', stdDeviation:'2', result:'b' });
+  const feM = mk('feMerge', {});
+  feM.appendChild(mk('feMergeNode', { in:'b' }));
+  feM.appendChild(mk('feMergeNode', { in:'SourceGraphic' }));
+  [feF, feC, feB, feM].forEach(n => filt.appendChild(n));
+  defs.appendChild(filt);
+  svg.appendChild(defs);
+
+  // ── REGEX banner ─────────────────────────────────────────────────────
+  const BW = 880, BH = 40, BX = 10, BY = 6;
+  svg.appendChild(mk('rect', { x:BX, y:BY, width:BW, height:BH, rx:4,
+    fill:'#ffcc80', stroke:'#d1cbbd', 'stroke-width':'2', filter:'url(#inset-sh)' }));
+  svg.appendChild(mk('rect', { x:BX+1, y:BY+1, width:BW-2, height:BH-2, rx:3,
+    fill:'none', stroke:'rgba(255,255,255,0.55)', 'stroke-width':'1.5' }));
+
+  const rawRegex = cfg.regex.replace(/\*/g, "'").replace(/\|/g, '+');
+  const alphabet = '\u03a3 = {' + cfg.alphabet.join(', ') + '}';
+  svg.appendChild(mk('text', {
+    x: BX+14, y: BY+BH/2, 'dominant-baseline':'central',
+    'font-family':'Courier Prime, monospace', 'font-size':'13',
+    'font-weight':'bold', fill:'#4a3b2c'
+  }, `REGEX: ${rawRegex}    ${alphabet}`));
+
+  // ── Single-column production rules ──────────────────────────────────
+  const rules   = cfg.rules;
+  const ROW_H   = 36;
+  const TOP     = BY + BH + 8;
+  const CARD_PAD = 10;
+  const COL_W   = 880;
+  const CHAR_W  = 9.6;
+
+  // How many rows fit before we'd overflow (leave 32px for legend)
+  const MAX_VISIBLE = Math.floor((460 - TOP - 32) / ROW_H);
+  const visibleRules = rules.slice(0, MAX_VISIBLE);
+
+  visibleRules.forEach((row, i) => {
+    const cardX = BX;
+    const cardY = TOP + i * ROW_H;
+    const cardH = ROW_H - 3;
+    const midY  = cardY + cardH / 2;
+
+    const isActive = (row.lhs === highlightLhs && row.rhs.includes(highlightRhs));
+    const isEven   = i % 2 === 0;
+
+    // card bg
+    svg.appendChild(mk('rect', {
+      x: cardX, y: cardY, width: COL_W, height: cardH, rx: 4,
+      fill: isActive ? 'url(#cfg-active)' : (isEven ? 'url(#cfg-card)' : '#ffe6b3'),
+      stroke: isActive ? '#d35400' : '#d1cbbd',
+      'stroke-width': isActive ? '2.5' : '1.5'
+    }));
+    // inner highlight
+    svg.appendChild(mk('rect', {
+      x: cardX+1, y: cardY+1, width: COL_W-2, height: cardH-2, rx:3,
+      fill:'none', stroke: isActive ? 'rgba(255,200,100,0.6)' : 'rgba(255,255,255,0.6)',
+      'stroke-width':'1'
+    }));
+
+    // active pulse marker (left edge bar)
+    if (isActive) {
+      svg.appendChild(mk('rect', {
+        x: cardX, y: cardY, width: 5, height: cardH, rx:2,
+        fill:'#d35400'
+      }));
+    }
+
+    // LHS badge
+    const isStart   = row.lhs === 'S';
+    const badgeCol  = isActive ? '#d35400' : (isStart ? '#d35400' : '#8c7a6b');
+    const badgeFill = isActive ? '#fff0db' : (isStart ? '#fff0db' : '#f4f1ea');
+    svg.appendChild(mk('rect', {
+      x: cardX+CARD_PAD, y: cardY+4, width:38, height:cardH-8, rx:4,
+      fill: badgeFill, stroke: badgeCol, 'stroke-width': (isStart||isActive)?'2':'1.5'
+    }));
+    svg.appendChild(mk('text', {
+      x: cardX+CARD_PAD+19, y: midY,
+      'text-anchor':'middle', 'dominant-baseline':'central',
+      'font-family':'Courier Prime, monospace', 'font-size':'17', 'font-weight':'bold',
+      fill: badgeCol
+    }, row.lhs));
+
+    // arrow
+    svg.appendChild(mk('text', {
+      x: cardX+CARD_PAD+52, y: midY, 'dominant-baseline':'central',
+      'font-family':'Courier Prime, monospace', 'font-size':'18',
+      fill:'#b07a30', 'font-weight':'bold'
+    }, '\u2192'));
+
+    // RHS tokens
+    const productionStr = row.rhs.join('  |  ');
+    const tokens = productionStr.split(/(\s+)/);
+    let cx = cardX + CARD_PAD + 76;
+
+    for (const tok of tokens) {
+      if (!tok) continue;
+      if (tok.trim() === '') { cx += tok.length * (CHAR_W * 0.45); continue; }
+      const t       = tok.trim();
+      const isVar   = /^[A-Z][']*$/.test(t);
+      const isSep   = t === '|';
+      const isLambda= t === '\u039b';
+
+      // highlight the specific matching production when active
+      const isMatchProd = isActive && !isSep &&
+        row.rhs.some(r => r === highlightRhs && r.split(' ').includes(t));
+
+      let fill, fw;
+      if (isSep)         { fill = '#b07a30'; fw = 'bold'; }
+      else if (isLambda) { fill = '#8c7a6b'; fw = 'normal'; }
+      else if (isVar)    { fill = isMatchProd ? '#d35400' : '#1a6e3d'; fw = 'bold'; }
+      else               { fill = isMatchProd ? '#a04000' : '#2c5f9e'; fw = 'normal'; }
+
+      if (isVar) {
+        svg.appendChild(mk('rect', {
+          x: cx-3, y: midY-10, width: t.length*CHAR_W+6, height:20, rx:3,
+          fill: isMatchProd ? '#ffe0b2' : '#e8f5ee', stroke:'none'
+        }));
+      }
+
+      svg.appendChild(mk('text', {
+        x: cx, y: midY, 'dominant-baseline':'central',
+        'font-family':'Courier Prime, monospace',
+        'font-size':'16', 'font-weight':fw, fill,
+        stroke: isVar ? (isMatchProd?'#ffe0b2':'#e8f5ee') : 'none',
+        'stroke-width':'3', 'paint-order':'stroke'
+      }, tok));
+
+      cx += tok.length * CHAR_W;
+    }
+  });
+
+  // ── Legend bar ───────────────────────────────────────────────────────
+  const legY = TOP + visibleRules.length * ROW_H + 4;
+  const legH = 26;
+  svg.appendChild(mk('rect', {
+    x:10, y:legY, width:880, height:legH, rx:4,
+    fill:'#ffcc80', stroke:'#d1cbbd', 'stroke-width':'1.5', filter:'url(#inset-sh)'
+  }));
+  const legendItems = [
+    { color:'#d35400', label:'S = Start variable' },
+    { color:'#1a6e3d', label:'UPPER = Variables'  },
+    { color:'#2c5f9e', label:'lower = Terminals'  },
+    { color:'#8c7a6b', label:'\u039b = \u03b5 (empty)' },
+    { color:'#d35400', label:'\u25ae = Active rule' },
+  ];
+  let lx = 22;
+  for (const item of legendItems) {
+    svg.appendChild(mk('circle', { cx:lx+5, cy:legY+legH/2, r:'5', fill:item.color }));
+    svg.appendChild(mk('text', {
+      x:lx+14, y:legY+legH/2, 'dominant-baseline':'central',
+      'font-family':'Courier Prime, monospace', 'font-size':'11.5', fill:'#4a3b2c'
+    }, item.label));
+    lx += item.label.length * 7.2 + 22;
+  }
+}
+
+// ════════════════════════════════════════════
+// CFG Derivation Log
+// ════════════════════════════════════════════
+function buildCfgLog(steps, accepted) {
+  const logEl = document.getElementById('trace-log');
+  if (!steps || steps.length === 0) {
+    logEl.innerHTML = accepted
+      ? '<div class="log-step" style="color:#237804">✓ Empty string — accepted (Λ)</div>'
+      : '<div class="log-step" style="color:#ff4d4f">✗ No derivation found</div>';
+    return;
+  }
+  logEl.innerHTML = steps.map((s, i) =>
+    `<div class="log-step cfg-log-step" id="cfg-log-${i}">
+      <b>${s.rule_lhs}</b> → <b>${s.rule_rhs}</b>
+      <span style="color:#8c7a6b;font-size:11px"> [${s.sentential}]</span>
+    </div>`
+  ).join('');
+}
+
+function highlightCfgLog(i) {
+  document.querySelectorAll('.cfg-log-step').forEach(el => el.classList.remove('cur'));
+  const line = document.getElementById('cfg-log-' + i);
+  if (line) { line.classList.add('cur'); line.scrollIntoView({ behavior:'smooth', block:'nearest' }); }
+}
+
+// ════════════════════════════════════════════
+// CFG Simulation (called from handleSimulate)
+// ════════════════════════════════════════════
+async function handleCfgSimulate(index) {
+  if (!listData[index] || listData[index].text === '') return;
+
+  resetCfgAnim();
+  activeIndex = index;
+  listData[index].status = null;
+  renderList();
+
+  const inputString = listData[index].text;
+  hideError();
+
+  let result;
+  try {
+    const res = await fetch(API + '/cfg/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cfg_id: currentId, input: inputString })
+    });
+    if (!res.ok) { showError((await res.json()).error || 'Server error'); return; }
+    result = await res.json();
+  } catch (e) {
+    showError('Cannot reach Flask: ' + e.message);
+    return;
+  }
+
+  cfgTrace = result;
+  buildCfgLog(result.steps, result.accepted);
+
+  if (!result.steps || result.steps.length === 0) {
+    // accepted empty or rejected immediately
+    listData[index].status = result.accepted ? 'valid' : 'invalid';
+    renderList();
+    await drawCFG();
+    return;
+  }
+
+  // ── Animate derivation steps ─────────────────────────────────────
+  cfgAnimStep = 0;
+  const showCfgStep = async (si) => {
+    const step = cfgTrace.steps[si];
+    highlightCfgLog(si);
+    await drawCFG(step.rule_lhs, step.rule_rhs);
+
+    // update string cell to show "after" sentential form
+    const row = listData[index];
+    row._derivation = step.after;
+    renderList();
+  };
+
+  await showCfgStep(0);
+
+  cfgAnimTimer = setInterval(async () => {
+    cfgAnimStep++;
+    if (cfgAnimStep < cfgTrace.steps.length) {
+      await showCfgStep(cfgAnimStep);
+    } else {
+      clearInterval(cfgAnimTimer);
+      // final result
+      listData[index].status = cfgTrace.accepted ? 'valid' : 'invalid';
+      listData[index]._derivation = null;
+      renderList();
+      await drawCFG();   // clear highlight
+      // show final accepted/rejected log line
+      const logEl = document.getElementById('trace-log');
+      const finalLine = document.createElement('div');
+      finalLine.className = 'log-step cur';
+      finalLine.style.color = cfgTrace.accepted ? '#237804' : '#ff4d4f';
+      finalLine.innerHTML = cfgTrace.accepted
+        ? `<b>✓ ACCEPTED</b> — "${inputString}" is in the language`
+        : `<b>✗ REJECTED</b> — "${inputString}" is not in the language`;
+      logEl.appendChild(finalLine);
+      finalLine.scrollIntoView({ behavior:'smooth', block:'nearest' });
+    }
+  }, 700);
+}
+
 window.setMode = function(mode) {
   currentMode = mode;
   
@@ -62,12 +387,31 @@ window.setMode = function(mode) {
   
   document.getElementById('diagram-title-text').textContent = fullTitle;
   
-  if(mode !== 'DFA') {
-     document.getElementById('automaton').innerHTML = '';
-     showError(mode + ' logic is not connected to Python yet!');
+  if (mode === 'CFG') {
+    resetAnim();
+    hideError();
+    // drawCFG loads cfgs; after that, pre-fill samples
+    drawCFG().then(() => {
+      const key = currentId || Object.keys(cfgs)[0];
+      const cfg = cfgs[key];
+      if (cfg && cfg.samples && cfg.samples.length > 0) {
+        // Only pre-fill if list is currently empty
+        const isEmpty = listData.every(d => d.text === '');
+        if (isEmpty) {
+          listData = Array(6).fill(null).map((_, i) => ({
+            text: cfg.samples[i] || '', status: null
+          }));
+          activeIndex = -1;
+          renderList();
+        }
+      }
+    });
+  } else if (mode !== 'DFA') {
+    document.getElementById('automaton').innerHTML = '';
+    showError(mode + ' logic is not connected to Python yet!');
   } else {
-     hideError();
-     if(currentId) selectDfa(currentId, true); 
+    hideError();
+    if(currentId) selectDfa(currentId, true); 
   }
 }
 
@@ -101,7 +445,20 @@ window.toggleDFA = function() {
   if (dfaKeys.length === 0) return;
   let idx = dfaKeys.indexOf(currentId);
   idx = (idx + 1) % dfaKeys.length;
-  selectDfa(dfaKeys[idx], false); 
+  selectDfa(dfaKeys[idx], false);
+  if (currentMode === 'CFG') {
+    drawCFG().then(() => {
+      const key = currentId || Object.keys(cfgs)[0];
+      const cfg = cfgs[key];
+      if (cfg && cfg.samples) {
+        listData = Array(6).fill(null).map((_, i) => ({
+          text: cfg.samples[i] || '', status: null
+        }));
+        activeIndex = -1;
+        renderList();
+      }
+    });
+  }
 }
 
 // ════════════════════════════════════════════
@@ -118,24 +475,40 @@ function renderList() {
     const btnAct  = (activeIndex === i) ? 'active-sim' : '';
     
     let displayText = "";
-    const isAnimActive = (activeIndex === i && traceData && animStep >= 0 && animStep < traceData.trace.length);
-    
-    if (isAnimActive && data.text !== "") {
-        const step = traceData.trace[animStep];
-        const charIdx = step ? step.char_index : -1;
-        const chars = data.text.split('');
-        
-        const animatedText = chars.map((ch, idx) => {
-            let cls = 'tape-char';
-            if (idx === charIdx) cls += ' current';
-            else if (idx < charIdx) cls += ' done';
-            return `<span class="${cls}">${ch}</span>`;
-        }).join('');
-        
-        displayText = '> ' + animatedText;
+
+    if (currentMode === 'CFG') {
+      // In CFG mode: show derivation sentential form during animation, plain text otherwise
+      const pointer = (activeIndex === i && data.text !== '') ? '> ' : '';
+      if (activeIndex === i && data._derivation) {
+        // show the live sentential form, styling variables orange, terminals blue
+        const tokens = data._derivation.split(' ');
+        const styledTokens = tokens.map(t => {
+          if (/^[A-Z][']*$/.test(t)) return `<span style="color:#d35400;font-weight:bold">${t}</span>`;
+          if (t === 'Λ') return `<span style="color:#8c7a6b">${t}</span>`;
+          return `<span style="color:#2c5f9e">${t}</span>`;
+        });
+        displayText = '⇒ ' + styledTokens.join(' ');
+      } else {
+        displayText = data.text !== '' ? pointer + data.text : '';
+      }
     } else {
-        const pointer = (activeIndex === i && data.text !== "") ? '> ' : '';
-        displayText = data.text !== "" ? pointer + data.text : "";
+      // DFA tape animation
+      const isAnimActive = (activeIndex === i && traceData && animStep >= 0 && animStep < traceData.trace.length);
+      if (isAnimActive && data.text !== "") {
+          const step = traceData.trace[animStep];
+          const charIdx = step ? step.char_index : -1;
+          const chars = data.text.split('');
+          const animatedText = chars.map((ch, idx) => {
+              let cls = 'tape-char';
+              if (idx === charIdx) cls += ' current';
+              else if (idx < charIdx) cls += ' done';
+              return `<span class="${cls}">${ch}</span>`;
+          }).join('');
+          displayText = '> ' + animatedText;
+      } else {
+          const pointer = (activeIndex === i && data.text !== "") ? '> ' : '';
+          displayText = data.text !== "" ? pointer + data.text : "";
+      }
     }
 
     html += `
@@ -173,6 +546,10 @@ document.getElementById('str-input').addEventListener('keydown', e => {
 // Simulation Logic
 // ════════════════════════════════════════════
 window.handleSimulate = async function(index) {
+  if (currentMode === 'CFG') {
+    await handleCfgSimulate(index);
+    return;
+  }
   if (currentMode !== 'DFA') {
       showError("Switch to DFA mode to simulate strings!");
       return;
@@ -213,9 +590,12 @@ function resetAnim() {
   clearInterval(animTimer);
   traceData = null;
   animStep  = -1;
+  resetCfgAnim();
   document.getElementById('trace-log').innerHTML = '— Waiting for input —';
-  drawDiagram(null, false, false);
-  visitedTransitions.clear();
+  if (currentMode === 'DFA') {
+    drawDiagram(null, false, false);
+    visitedTransitions.clear();
+  }
 }
 
 async function fetchTrace(input) {
@@ -569,14 +949,6 @@ function drawState(svg, state, isActive, accepted, rejected) {
   else if (isActive && rejected)  { fill = '#fff0f0'; stroke = '#ff4d4f'; txtCol = '#a8071a';    }
   else if (isActive)              { fill = '#ffffff'; stroke = '#d35400'; txtCol = '#d35400'; }
   else if (state.accept)          {                   stroke = '#237804'; txtCol = '#237804'; }
-
-  if (state.start) {
-    svg.appendChild(svgEl('line', {
-      x1: state.x - R - 24, y1: state.y,
-      x2: state.x - R - 2,  y2: state.y,
-      stroke: '#8c7a6b', 'stroke-width': '2', 'marker-end': 'url(#m-default)'
-    }));
-  }
 
   svg.appendChild(svgEl('circle', {
     cx: state.x, cy: state.y, r: R,

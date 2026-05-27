@@ -217,6 +217,66 @@ def run_dfa(dfa_def, input_string):
     }
 
 
+# --- CFG Definitions ---
+
+CFGS = {
+    "DFA 1": {
+        "regex": "(bab)*(b+a)(bab+aba)(a+b)*(aa+bb)*(b+a+bb)(a+b)*(aa+bb)",
+        "alphabet": ["a", "b"],
+        "samples": [
+            "bbabbaa",     # Z=ε  Y=b  X=bab  W=ε  V=ε  U=b  T=ε  R=aa
+            "abababb",     # Z=ε  Y=a  X=bab  W=ε  V=ε  U=a  T=ε  R=bb
+            "bbabaaa",     # Z=ε  Y=b  X=bab  W=a  V=ε  U=a  T=ε  R=aa
+            "bbabbbaa",    # Z=ε  Y=b  X=bab  W=b  V=ε  U=b  T=ε  R=aa
+            "babbbabbaa",  # Z=bab Y=b X=bab  W=ε  V=ε  U=b  T=ε  R=aa
+            "aababbb",     # Z=ε  Y=a  X=aba  W=b  V=ε  U=b  T=ε  R=bb
+        ],
+        "invalid_samples": [
+            "ab", "bab", "aab", "babbabbaa", "ba", "b",
+        ],
+        "rules": [
+            {"lhs": "S",   "rhs": ["Z Y X W V U T R"]},
+            {"lhs": "Z",   "rhs": ["bab Z", "\u039b"]},
+            {"lhs": "Y",   "rhs": ["b", "a"]},
+            {"lhs": "X",   "rhs": ["bab", "aba"]},
+            {"lhs": "W",   "rhs": ["a W", "b W", "\u039b"]},
+            {"lhs": "V",   "rhs": ["aa V", "bb V", "\u039b"]},
+            {"lhs": "U",   "rhs": ["b", "a", "bb"]},
+            {"lhs": "T",   "rhs": ["a T", "b T", "\u039b"]},
+            {"lhs": "R",   "rhs": ["aa", "bb"]},
+        ],
+    },
+    "DFA 2": {
+        "regex": "(1+0)*(11+00)(00+11)*(1+0+11)(1+0+11)*(101+111)(101+111)*(1+0*+11)(1+0*+11)",
+        "alphabet": ["0", "1"],
+        "samples": [
+            "11110111",    # Z=ε  Y=11  X=ε  W=1  V=ε  U=101  T=ε  R=11
+            "00011111",    # Z=ε  Y=00  X=ε  W=0  V=ε  U=111  T=ε  R=11
+            "111110111",   # Z=1  Y=11  X=ε  W=1  V=ε  U=101  T=ε  R=11
+            "011110111",   # Z=0  Y=11  X=ε  W=1  V=ε  U=101  T=ε  R=11
+            "111101111",   # Z=ε  Y=11  X=ε  W=1  V=ε  U=101  T=ε  R=111
+            "00010110111", # Z=ε  Y=00  X=ε  W=0  V=ε  U=101  T=101 R=11
+        ],
+        "invalid_samples": [
+            "01", "11", "00", "101", "111", "0011",
+        ],
+        "rules": [
+            {"lhs": "S",   "rhs": ["Z Y X W V U T R"]},
+            {"lhs": "Z",   "rhs": ["1 Z", "0 Z", "\u039b"]},
+            {"lhs": "Y",   "rhs": ["11", "00"]},
+            {"lhs": "X",   "rhs": ["00 X", "11 X", "\u039b"]},
+            {"lhs": "W",   "rhs": ["1", "0", "11"]},
+            {"lhs": "V",   "rhs": ["1 V", "0 V", "11 V", "\u039b"]},
+            {"lhs": "U",   "rhs": ["101", "111"]},
+            {"lhs": "T",   "rhs": ["101 T", "111 T", "\u039b"]},
+            {"lhs": "R",   "rhs": ["1 R'", "0* R'", "11 R'"]},
+            {"lhs": "R'",  "rhs": ["1 R''", "0* R''", "11 R''"]},
+            {"lhs": "R''", "rhs": ["\u039b"]},
+        ],
+    },
+}
+
+
 # --- Routes ---
 
 @app.route("/api/dfas", methods=["GET"])
@@ -298,6 +358,201 @@ def batch():
             r = run_dfa(dfa_def, s)
             results.append({"input": s, "accepted": r["accepted"], "dead": r["dead"]})
     return jsonify({"dfa_id": dfa_id, "results": results})
+
+
+def parse_rhs(rhs_str):
+    """Split 'a W' -> ['a', 'W'],  'bab' -> ['bab'],  'Λ' -> []"""
+    return [t for t in rhs_str.split() if t]
+
+
+def derive_cfg(cfg_def, input_string):
+    """
+    Top-down recursive descent parser with backtracking (no broken memo).
+    The input is kept as a plain string; terminals are matched as substrings
+    so multi-char terminals like 'bab', 'aa', '101' work correctly.
+
+    Returns {accepted, steps[], input}.
+    Each step: {step_num, sentential, rule_lhs, rule_rhs, after}
+    """
+    LAMBDA = "\u039b"
+
+    # grammar: var -> [ [sym, sym, ...], ... ]   ([] means ε)
+    grammar = {}
+    for rule in cfg_def["rules"]:
+        v = rule["lhs"]
+        grammar.setdefault(v, [])
+        for rhs in rule["rhs"]:
+            grammar[v].append([] if rhs == LAMBDA else parse_rhs(rhs))
+
+    variables = set(grammar.keys())
+
+    # ------------------------------------------------------------------
+    # match(var, s) -> parse-node | None
+    #   parse-node = (production_list, [ (child_var, child_str, child_node), ... ])
+    #
+    # match_seq(symbols, s) -> (consumed_str, child_list) | None
+    #   consumed_str = portion of s matched by symbols
+    # ------------------------------------------------------------------
+
+    # Cache: (var, s) -> True/False  (cache both to avoid re-exploring)
+    pos_cache = {}
+
+    def match(var, s, depth=0):
+        if depth > 100:
+            return None
+        key = (var, s)
+        if key in pos_cache:
+            return pos_cache[key]
+
+        for prod in grammar.get(var, []):
+            result = match_seq(prod, s, depth)
+            if result is not None:
+                consumed, children = result
+                if consumed == s:
+                    node = (prod, children)
+                    pos_cache[key] = node
+                    return node
+
+        pos_cache[key] = None     # cache failure only after trying ALL productions
+        return None
+
+    def match_seq(symbols, s, depth):
+        """
+        Returns (total_consumed, children) if symbols can derive a prefix of s,
+        consuming exactly len(total_consumed) characters and leaving nothing.
+        Because we require full consumption at the top level, we thread the
+        remaining string and demand it be empty when symbols run out.
+        """
+        return _seq(symbols, s, depth, [])
+
+    def _seq(symbols, remaining, depth, children):
+        if not symbols:
+            return ("", children) if remaining == "" else None
+
+        sym = symbols[0]
+        rest = symbols[1:]
+
+        if sym not in variables:
+            # Terminal: must be a literal prefix match
+            n = len(sym)
+            if remaining[:n] == sym:
+                result = _seq(rest, remaining[n:], depth, children)
+                if result is not None:
+                    consumed, ch = result
+                    return (sym + consumed, ch)
+            return None
+        else:
+            # Variable: try every possible split of remaining
+            for split in range(len(remaining) + 1):
+                prefix = remaining[:split]
+                node = match(sym, prefix, depth + 1)
+                if node is not None:
+                    result = _seq(rest, remaining[split:], depth,
+                                  children + [(sym, prefix, node)])
+                    if result is not None:
+                        consumed, ch = result
+                        return (prefix + consumed, ch)
+            return None
+
+    # ── Run parser ────────────────────────────────────────────────────
+    root = match("S", input_string)
+    if root is None:
+        return {"accepted": False, "steps": [], "input": input_string}
+
+    # ── Flatten parse tree → leftmost derivation steps ───────────────
+    # sentential form is a list of symbol-strings (vars or terminals)
+    steps = []
+    step_num = [0]
+
+    def flatten(var, s, node, form, pos):
+        """Expand var at position pos in form, then recurse into children."""
+        prod, children = node
+        rhs_str = " ".join(prod) if prod else LAMBDA
+
+        new_form = form[:pos] + prod + form[pos + 1:]
+
+        step_num[0] += 1
+        steps.append({
+            "step_num":     step_num[0],
+            "sentential":   " ".join(form) if form else LAMBDA,
+            "rule_lhs":     var,
+            "rule_rhs":     rhs_str,
+            "after":        " ".join(new_form) if new_form else LAMBDA,
+        })
+
+        # walk children left-to-right, keeping form in sync
+        cur_form = new_form
+        cur_pos  = pos
+        for child_var, child_s, child_node in children:
+            # find the next occurrence of child_var starting at cur_pos
+            idx = next(
+                (j for j in range(cur_pos, len(cur_form)) if cur_form[j] == child_var),
+                None
+            )
+            if idx is None:
+                continue
+            # expand it
+            child_prod, _ = child_node
+            flatten(child_var, child_s, child_node, cur_form, idx)
+            # update cur_form to reflect that expansion
+            cur_form = cur_form[:idx] + child_prod + cur_form[idx + 1:]
+            cur_pos  = idx + max(len(child_prod), 1)
+
+    flatten("S", input_string, root, ["S"], 0)
+
+    return {"accepted": True, "steps": steps, "input": input_string}
+
+
+@app.route("/api/cfgs", methods=["GET"])
+def list_cfgs():
+    """Return all CFG definitions (rules + metadata)."""
+    result = {}
+    for key, cfg in CFGS.items():
+        result[key] = {
+            "regex":           cfg["regex"],
+            "alphabet":        cfg["alphabet"],
+            "rules":           cfg["rules"],
+            "samples":         cfg.get("samples", []),
+            "invalid_samples": cfg.get("invalid_samples", []),
+        }
+    return jsonify(result)
+
+
+@app.route("/api/cfg/<cfg_id>", methods=["GET"])
+def get_cfg(cfg_id):
+    """Return a single CFG definition."""
+    if cfg_id not in CFGS:
+        return jsonify({"error": f"CFG '{cfg_id}' not found"}), 404
+    return jsonify(CFGS[cfg_id])
+
+
+@app.route("/api/cfg/validate", methods=["POST"])
+def cfg_validate():
+    """
+    Validate a string against a CFG and return a step-by-step derivation.
+    Body: { "cfg_id": "DFA 1", "input": "babaabb" }
+    """
+    body = request.get_json()
+    if not body:
+        return jsonify({"error": "JSON body required"}), 400
+
+    cfg_id      = body.get("cfg_id")
+    input_string = body.get("input", "")
+
+    if cfg_id not in CFGS:
+        return jsonify({"error": f"CFG '{cfg_id}' not found"}), 404
+
+    cfg_def  = CFGS[cfg_id]
+    alphabet = set(cfg_def["alphabet"])
+    invalid  = [ch for ch in input_string if ch not in alphabet]
+    if invalid:
+        return jsonify({
+            "error": f"Invalid character(s): {list(set(invalid))}. Alphabet is {sorted(alphabet)}"
+        }), 400
+
+    result = derive_cfg(cfg_def, input_string)
+    result["cfg_id"] = cfg_id
+    return jsonify(result)
 
 
 if __name__ == "__main__":

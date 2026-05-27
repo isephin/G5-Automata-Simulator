@@ -32,8 +32,7 @@ DFAS = {
             {"id": "q18", "label": "q18", "start": False, "accept": False},
             {"id": "trapstate_q2", "label": "T", "start": False, "accept": False},
             {"id": "trapstate_q12_q16", "label": "T", "start": False, "accept": False},
-            {"id": "trapstate_q13", "label": "T", "start": False, "accept": False},
-            {"id": "trapstate_q17", "label": "T", "start": False, "accept": False},
+            {"id": "trapstate_q13_q17", "label": "T", "start": False, "accept": False},
 
             {"id": "first_end_state", "label": "+", "start": False, "accept": True},
             {"id": "second_end_state", "label": "+", "start": False, "accept": True}
@@ -64,7 +63,7 @@ DFAS = {
             {"from": "q6", "to": "q7", "label": "a"},
             {"from": "q6", "to": "second_end_state", "label": "b"},
 
-            {"from": "q7", "to": "second_end_state", "label": "a"},
+            {"from": "q7", "to": "first_end_state", "label": "a"},
             {"from": "q7", "to": "q10", "label": "b"},
 
             {"from": "q8", "to": "q9", "label": "a"},
@@ -83,9 +82,9 @@ DFAS = {
             {"from": "q12", "to": "trapstate_q12_q16", "label": "b"},
             {"from": "trapstate_q12_q16", "to": "trapstate_q12_q16", "label": "a, b"},
 
-            {"from": "q13", "to": "trapstate_q13", "label": "a"},
+            {"from": "q13", "to": "trapstate_q13_q17", "label": "a"},
             {"from": "q13", "to": "q14", "label": "b"},
-            {"from": "trapstate_q13", "to": "trapstate_q13", "label": "a, b"},
+            {"from": "trapstate_q13_q17", "to": "trapstate_q13_q17", "label": "a, b"},
 
             {"from": "q14", "to": "q15", "label": "a"},
             {"from": "q14", "to": "q18", "label": "b"},
@@ -98,13 +97,9 @@ DFAS = {
             {"from": "q16", "to": "q17", "label": "b"},
 
             {"from": "q17", "to": "q14", "label": "a"},
-            {"from": "q17", "to": "trapstate_q17", "label": "b"},
-            {"from": "trapstate_q17", "to": "trapstate_q17", "label": "a, b"},
+            {"from": "q17", "to": "trapstate_q13_q17", "label": "b"},
     
             {"from": "q18", "to": "q10", "label": "b"},
-            {"from": "q18", "to": "q7", "label": "a"},
-
-            {"from": "q18", "to": "q7", "label": "a"},
             {"from": "q18", "to": "q7", "label": "a"},
 
             {"from": "first_end_state", "to": "first_end_state", "label": "a"},
@@ -119,7 +114,7 @@ DFAS = {
         "description": "(1|0)*(11|00)(00|11)*(1|0|11)(1|0|11)*(101|111)(101|111)*(1|0*|11)(1|0*|11)",
         "alphabet": ["0", "1"],
         "states": [
-            {"id": "q0", "label": "-",  "start": True,  "accept": True},
+            {"id": "q0", "label": "-",  "start": True,  "accept": False},
             {"id": "q1", "label": "q1", "start": False, "accept": False},
             {"id": "q2", "label": "q2", "start": False, "accept": False},
             {"id": "q3", "label": "q3", "start": False, "accept": False},

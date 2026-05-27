@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════
 // State & Variables
 // ════════════════════════════════════════════
-const API = '/api';
+const API = 'http://localhost:5000/api'
 const R   = 24;   
 let visitedTransitions = new Set();
 let dfas      = {};     
@@ -10,7 +10,11 @@ let currentId = null;
 let traceData = null;   
 let animStep  = -1;     
 let animTimer = null;   
-let currentMode = 'DFA'; 
+let currentMode = 'DFA';
+
+// ── Pan & Zoom state ──
+let vpX = 0, vpY = 0, vpScale = 1;
+let isPanning = false, panStartX = 0, panStartY = 0, panOriginX = 0, panOriginY = 0;
 
 let listData = [
   { text: "", status: null }, 
@@ -58,7 +62,6 @@ window.setMode = function(mode) {
   
   document.getElementById('diagram-title-text').textContent = fullTitle;
   
-  // 4. Handle machine logic
   if(mode !== 'DFA') {
      document.getElementById('automaton').innerHTML = '';
      showError(mode + ' logic is not connected to Python yet!');
@@ -70,6 +73,7 @@ window.setMode = function(mode) {
 
 function selectDfa(id, keepList = false) {
   currentId = id;
+  resetViewport();
   const dfa = dfas[currentId];
   
   let regexStr = dfa.description.replace(/\*/g, "'").replace(/\|/g, "+");
@@ -288,18 +292,71 @@ function svgEl(tag, attrs) {
 
 function getPositions() {
   const states = dfas[currentId].states;
-  const count  = states.length;
-  if (count === 0) return [];
-  const W = 900, H = 460, padX = 80, padY = 70;
-  const cols  = Math.max(2, Math.ceil(Math.sqrt(count * 1.6)));
-  const rows  = Math.ceil(count / cols);
-  const cellW = cols > 1 ? (W - padX * 2) / (cols - 1) : 0;
-  const cellH = rows > 1 ? (H - padY * 2) / (rows - 1) : 0;
-  return states.map((s, i) => ({
-    ...s,
-    x: padX + (i % cols) * cellW,
-    y: padY + Math.floor(i / cols) * cellH,
-  }));
+  if (states.length === 0) return [];
+
+  const LAYOUTS = {
+    // DFA 1 — 24 states (Symmetrical Valley Grid)
+    "DFA 1": {
+      "q0":                { x: 50,  y: 230 },
+
+      "q1":                { x: 150, y: 130 },
+      "q11":               { x: 150, y: 330 },
+
+      // Placed in the "valley" between column 2 and 3 so lines don't cross nodes!
+      "trapstate_q2":      { x: 315, y: 60  }, 
+      "q2":                { x: 260, y: 130 },
+      "q12":               { x: 260, y: 230 },
+      "q16":               { x: 260, y: 330 },
+      "trapstate_q12_q16": { x: 315, y: 390 }, 
+
+      "q3":                { x: 370, y: 130 },
+      "q13":               { x: 370, y: 230 },
+      "q17":               { x: 370, y: 330 },
+      
+      // Placed perfectly in the valley between column 3 and 4!
+      "trapstate_q13_q17": { x: 425, y: 390 }, 
+
+      "q4":                { x: 480, y: 130 },
+      "q14":               { x: 480, y: 330 },
+
+      "q5":                { x: 590, y: 70  },
+      "q8":                { x: 590, y: 170 },
+      "q15":               { x: 590, y: 290 },
+      "q18":               { x: 590, y: 390 },
+
+      "q6":                { x: 710, y: 70  },
+      "q9":                { x: 710, y: 160 },
+      "q7":                { x: 720, y: 250 },
+      "q10":               { x: 720, y: 370 },
+
+      "first_end_state":   { x: 850, y: 160 },
+      "second_end_state":  { x: 850, y: 300 },
+    },
+
+    // DFA 2 — 14 states (q0-q13) Symmetrical Grid Layout
+    "DFA 2": {
+      "q0":  { x: 60,  y: 230 },
+      "q1":  { x: 190, y: 90  }, 
+      "q2":  { x: 190, y: 370 }, 
+      "q5":  { x: 320, y: 90  }, 
+      "q3":  { x: 320, y: 370 }, 
+      "q6":  { x: 450, y: 90  }, 
+      "q4":  { x: 450, y: 230 }, 
+      "q8":  { x: 450, y: 370 }, 
+      "q11": { x: 580, y: 90  }, 
+      "q7":  { x: 580, y: 230 }, 
+      "q12": { x: 580, y: 370 }, 
+      "q10": { x: 710, y: 90  }, 
+      "q9":  { x: 710, y: 370 }, 
+      "q13": { x: 840, y: 230 },
+    },
+  };
+
+  const layout = LAYOUTS[currentId];
+  return states.map(s => {
+    const pos = layout && layout[s.id] ? layout[s.id] : { x: 450, y: 230 };
+    return { ...s, ...pos };
+  });
 }
 
 function drawDiagram(activeId, accepted, rejected) {
@@ -325,57 +382,144 @@ function drawDiagram(activeId, accepted, rejected) {
   }
   svg.appendChild(defs);
 
+  const g = svgEl('g', { id: 'vp-group', transform: `translate(${vpX},${vpY}) scale(${vpScale})` });
+  svg.appendChild(g);
+
   let activeTrans = null;
   if (animStep > 0 && traceData && animStep < traceData.trace.length) {
     activeTrans = { from: traceData.trace[animStep - 1].state, to: traceData.trace[animStep].state };
   }
 
+  // --- UNIVERSAL GROUPING LOGIC ---
+  const groupedTransitions = {};
   for (const t of dfa.transitions) {
+    const key = t.from + '->' + t.to;
+    if (!groupedTransitions[key]) {
+      groupedTransitions[key] = { from: t.from, to: t.to, labels: [] };
+    }
+    if (!groupedTransitions[key].labels.includes(t.label)) {
+       groupedTransitions[key].labels.push(t.label);
+    }
+  }
+
+  for (const key in groupedTransitions) {
+    const t = groupedTransitions[key];
     const from = byId[t.from], to = byId[t.to];
     if (!from || !to) continue;
+    
     const isActive = activeTrans && activeTrans.from === t.from && activeTrans.to === t.to;
-    const key = t.from + '->' + t.to;
     const isVisited = visitedTransitions.has(key);
-
     const color = isActive ? '#d35400' : isVisited ? '#237804' : '#8c7a6b';
     const marker = isActive ? 'm-active' : isVisited ? 'm-accept' : 'm-default';
     const sw = isActive ? '3' : isVisited ? '2.5' : '1.5';
-    
-    if (t.from === t.to) drawLoop(svg, from, t.label, color, marker, sw);
-    else                 drawArrow(svg, dfa.transitions, from, to, t.label, color, marker, sw);
+    const combinedLabel = t.labels.join(', ');
+
+    if (t.from === t.to) drawLoop(g, from, combinedLabel, color, marker, sw);
+    else                 drawArrow(g, dfa.transitions, from, to, combinedLabel, color, marker, sw);
   }
 
-  for (const s of pos) drawState(svg, s, s.id === activeId, accepted, rejected);
+  for (const s of pos) drawState(g, s, s.id === activeId, accepted, rejected);
 }
 
 function drawLoop(svg, pos, label, color, marker, sw) {
-  const lr = 20;
-  const topY = pos.y - R;
+  const lr = 18;
+  // --- GRAVITY LOOPS FIX ---
+  const isBottom = pos.y > 300; 
+
+  const startX = isBottom ? pos.x + lr : pos.x - lr;
+  const endX   = isBottom ? pos.x - lr : pos.x + lr;
+  const startY = isBottom ? pos.y + R : pos.y - R;
+
   svg.appendChild(svgEl('path', {
-    d: `M${pos.x - lr} ${topY} A${lr} ${lr} 0 1 1 ${pos.x + lr} ${topY}`,
+    d: `M${startX} ${startY} A${lr} ${lr} 0 1 1 ${endX} ${startY}`,
     fill: 'none', stroke: color, 'stroke-width': sw, 'marker-end': `url(#${marker})`
   }));
+  
+  const textY = isBottom ? startY + lr * 1.5 + 4 : startY - lr * 1.5 - 2;
+  
   const t = svgEl('text', {
-    x: pos.x, y: topY - lr * 2 - 4,
-    'text-anchor': 'middle', fill: color, 'font-size': '16', 'font-family': 'monospace', 'font-weight': 'bold',
+    x: pos.x, y: textY,
+    'text-anchor': 'middle', 'dominant-baseline': 'central',
+    fill: color, 'font-size': '16', 'font-family': 'monospace', 'font-weight': 'bold',
     stroke: '#ffedb3', 'stroke-width': '4', 'paint-order': 'stroke'
   });
   t.textContent = label;
   svg.appendChild(t);
 }
 
+function linePointDist(sx, sy, ex, ey, px, py) {
+  const dx = ex - sx, dy = ey - sy;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(px - sx, py - sy);
+  let t = ((px - sx) * dx + (py - sy) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - sx - t * dx, py - sy - t * dy);
+}
+
 function drawArrow(svg, transitions, from, to, label, color, marker, sw) {
+  const pos = getPositions();
   const hasReverse = transitions.some(t => t.from === to.id && t.to === from.id);
   const dx = to.x - from.x, dy = to.y - from.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
   const ux = dx / dist, uy = dy / dist;
   const nx = -uy, ny = ux;
-
   const sx = from.x + ux * R, sy = from.y + uy * R;
   const ex = to.x   - ux * R, ey = to.y   - uy * R;
 
-  const side   = from.id > to.id ? -1 : 1;
-  const offset = hasReverse ? 26 * side : 0;
+  // ══════════════════════════════════════
+  // UNIVERSAL UPGRADED MATH
+  // ══════════════════════════════════════
+  let offset = hasReverse ? 30 : 0; 
+  
+  if (offset === 0) {
+    const CLEAR = R + 10;
+    for (const s of pos) {
+      if (s.id === from.id || s.id === to.id) continue;
+      const d = linePointDist(sx, sy, ex, ey, s.x, s.y);
+      if (d < CLEAR) {
+        const cross = (to.x - from.x) * (s.y - from.y) - (to.y - from.y) * (s.x - from.x);
+        const arcSide = cross > 0 ? 1 : -1;
+        const needed = Math.ceil((CLEAR - d) / 10) * 18;
+        if (Math.abs(needed * arcSide) > Math.abs(offset)) {
+          offset = needed * arcSide;
+        }
+      }
+    }
+  }
+
+  // Independent overrides based on current DFA mode
+const ARC_OVERRIDES = { 
+    "DFA 1": { 
+        "q7->q10": 45, 
+        "q10->q7": 45,  
+
+        // --- Your New Custom Curves ---
+        "q13->trapstate_q13_q17": 0, // Bends q13 to trapstate outward
+        "q12->trapstate_q12_q16": 0, // Bends q12 to trapstate outward
+        "q18->q7": -50,               // Sweeps q18 up to q7 from the left
+        "q9->q10": -90,                // Bows q10 to q9 wide around the center traffic
+        "q6->q7": -65,
+        "q5->q7": -20,
+        "q15->q7": -45,
+        "q10->q7": 0,
+        "q9->first_end_state": -40,                
+        "first_end_state->q7": -60,
+        "first_end_state->q10": -40,   
+        "second_end_state->q7": 60    // Sweeps the bottom final state smoothly back to q7
+    },
+    "DFA 2": { 
+        "q8->q11": -50, 
+        "q12->q11": 70, 
+        "q12->q3": 90 
+    } 
+  };
+  
+  const overrideKey = from.id + '->' + to.id;
+  const activeArcs = ARC_OVERRIDES[currentId] || {};
+  if (activeArcs[overrideKey] !== undefined) {
+      offset = activeArcs[overrideKey];
+  }
+  
   const mx = (sx + ex) / 2 + nx * offset;
   const my = (sy + ey) / 2 + ny * offset;
 
@@ -384,11 +528,34 @@ function drawArrow(svg, transitions, from, to, label, color, marker, sw) {
     fill: 'none', stroke: color, 'stroke-width': sw, 'marker-end': `url(#${marker})`
   }));
 
-  const lx = (offset ? mx : (sx + ex) / 2) + nx * 14;
-  const ly = (offset ? my : (sy + ey) / 2) + ny * 14 + (offset ? 0 : -8);
+  const TEXT_OVERRIDES = { 
+      "DFA 1": { 
+          "q2->q3": { x: 0, y: -15 }, 
+          "q12->q13": { x: 0, y: -15 },
+          "q16->q17": { x: 0, y: -15 } 
+      },
+      "DFA 2": { "q4->q7": { x: 0, y: 0 } } 
+  };
   
+  let tOffX = 0, tOffY = 0;
+  const activeTexts = TEXT_OVERRIDES[currentId] || {};
+  if (activeTexts[overrideKey]) {
+    tOffX = activeTexts[overrideKey].x;
+    tOffY = activeTexts[overrideKey].y;
+  }
+
+ // --- CENTERED TEXT MATH ---
+  const midX = 0.25 * sx + 0.5 * mx + 0.25 * ex;
+  const midY = 0.25 * sy + 0.5 * my + 0.25 * ey;
+  
+  const textDist = 0; 
+  
+  const lx = midX + nx * textDist + tOffX;
+  const ly = midY + ny * textDist + tOffY;
+
   const t = svgEl('text', {
-    x: lx, y: ly, 'text-anchor': 'middle',
+    x: lx, y: ly, 
+    'text-anchor': 'middle', 'dominant-baseline': 'central', 
     fill: color, 'font-size': '16', 'font-family': 'monospace', 'font-weight': 'bold',
     stroke: '#ffedb3', 'stroke-width': '4', 'paint-order': 'stroke'
   });
@@ -441,7 +608,84 @@ function hideError() {
   document.getElementById('error-msg').classList.remove('show');
 }
 
-// Kick it off!
+// ════════════════════════════════════════════
+// Pan & Zoom
+// ════════════════════════════════════════════
+function applyViewport() {
+  const g = document.getElementById('vp-group');
+  if (g) g.setAttribute('transform', `translate(${vpX},${vpY}) scale(${vpScale})`);
+}
+
+function resetViewport() {
+  vpX = 0; vpY = 0; vpScale = 1;
+  applyViewport();
+}
+
+(function initPanZoom() {
+  const svg = document.getElementById('automaton');
+
+  svg.addEventListener('wheel', e => {
+    e.preventDefault();
+    const rect = svg.getBoundingClientRect();
+    const svgW = 900, svgH = 460;
+    const mx = (e.clientX - rect.left) / rect.width  * svgW;
+    const my = (e.clientY - rect.top)  / rect.height * svgH;
+
+    const delta  = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    const newScale = Math.min(4, Math.max(0.3, vpScale * delta));
+
+    vpX = mx - (mx - vpX) * (newScale / vpScale);
+    vpY = my - (my - vpY) * (newScale / vpScale);
+    vpScale = newScale;
+    applyViewport();
+  }, { passive: false });
+
+  svg.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    isPanning = true;
+    panStartX = e.clientX; panStartY = e.clientY;
+    panOriginX = vpX;      panOriginY = vpY;
+    svg.style.cursor = 'grabbing';
+  });
+  window.addEventListener('mousemove', e => {
+    if (!isPanning) return;
+    const rect = svg.getBoundingClientRect();
+    const scaleX = 900 / rect.width;
+    const scaleY = 460 / rect.height;
+    vpX = panOriginX + (e.clientX - panStartX) * scaleX;
+    vpY = panOriginY + (e.clientY - panStartY) * scaleY;
+    applyViewport();
+  });
+  window.addEventListener('mouseup', () => {
+    isPanning = false;
+    svg.style.cursor = 'grab';
+  });
+
+  let lastTouchX = 0, lastTouchY = 0;
+  svg.addEventListener('touchstart', e => {
+    if (e.touches.length === 1) {
+      lastTouchX = e.touches[0].clientX;
+      lastTouchY = e.touches[0].clientY;
+    }
+  }, { passive: true });
+  svg.addEventListener('touchmove', e => {
+    if (e.touches.length === 1) {
+      e.preventDefault();
+      const rect = svg.getBoundingClientRect();
+      const scaleX = 900 / rect.width;
+      const scaleY = 460 / rect.height;
+      vpX += (e.touches[0].clientX - lastTouchX) * scaleX;
+      vpY += (e.touches[0].clientY - lastTouchY) * scaleY;
+      lastTouchX = e.touches[0].clientX;
+      lastTouchY = e.touches[0].clientY;
+      applyViewport();
+    }
+  }, { passive: false });
+
+  svg.addEventListener('dblclick', () => resetViewport());
+  svg.style.cursor = 'grab';
+})();
+
 boot();
 
 // ════════════════════════════════════════════
@@ -473,7 +717,7 @@ window.openModal = function(type) {
           <div style="text-align:center; background: #fff0db; padding: 15px; border-radius: 12px; border: 2px dashed #eabf75;">
             <p style="margin-bottom: 8px;"><b>Members:</b></p>
             <p>Gem Eirien A. Capistrano</p>
-            <p>Joseph Cinco</p>
+            <p>Joseph Christian C. Cinco</p>
             <p>John Michael D. Kamantigue</p>
             <p>Justine Nicol D. Lagajino</p>
           </div>

@@ -69,7 +69,7 @@ function resetCfgAnim() {
 }
 
 // ════════════════════════════════════════════
-// CFG Renderer — single column, top-to-bottom
+// CFG Renderer — Analog Calculator / Ledger Layout
 // ════════════════════════════════════════════
 async function drawCFG(highlightLhs = null, highlightRhs = null) {
   const ok = await loadCfgs();
@@ -92,173 +92,148 @@ async function drawCFG(highlightLhs = null, highlightRhs = null) {
     return el;
   };
 
-  // ── defs ────────────────────────────────────────────────────────────
-  const defs = mk('defs', {});
-  const cardGrad = mk('linearGradient', { id:'cfg-card', x1:'0', y1:'0', x2:'0', y2:'1' });
-  cardGrad.appendChild(mk('stop', { offset:'0%',   'stop-color':'#fdfcfb' }));
-  cardGrad.appendChild(mk('stop', { offset:'100%', 'stop-color':'#f4f1ea' }));
-  defs.appendChild(cardGrad);
-
-  const activeGrad = mk('linearGradient', { id:'cfg-active', x1:'0', y1:'0', x2:'0', y2:'1' });
-  activeGrad.appendChild(mk('stop', { offset:'0%',   'stop-color':'#fff8ee' }));
-  activeGrad.appendChild(mk('stop', { offset:'100%', 'stop-color':'#ffe0a0' }));
-  defs.appendChild(activeGrad);
-
-  const filt = mk('filter', { id:'inset-sh', x:'-5%', y:'-5%', width:'110%', height:'110%' });
-  const feF = mk('feFlood',       { 'flood-color':'rgba(0,0,0,0.15)', result:'f' });
-  const feC = mk('feComposite',   { in:'f', in2:'SourceGraphic', operator:'in', result:'s' });
-  const feB = mk('feGaussianBlur',{ in:'s', stdDeviation:'2', result:'b' });
-  const feM = mk('feMerge', {});
-  feM.appendChild(mk('feMergeNode', { in:'b' }));
-  feM.appendChild(mk('feMergeNode', { in:'SourceGraphic' }));
-  [feF, feC, feB, feM].forEach(n => filt.appendChild(n));
-  defs.appendChild(filt);
-  svg.appendChild(defs);
-
-  // ── REGEX banner ─────────────────────────────────────────────────────
-  const BW = 880, BH = 40, BX = 10, BY = 6;
-  svg.appendChild(mk('rect', { x:BX, y:BY, width:BW, height:BH, rx:4,
-    fill:'#ffcc80', stroke:'#d1cbbd', 'stroke-width':'2', filter:'url(#inset-sh)' }));
-  svg.appendChild(mk('rect', { x:BX+1, y:BY+1, width:BW-2, height:BH-2, rx:3,
-    fill:'none', stroke:'rgba(255,255,255,0.55)', 'stroke-width':'1.5' }));
-
-  const rawRegex = cfg.regex.replace(/\*/g, "'").replace(/\|/g, '+');
-  const alphabet = '\u03a3 = {' + cfg.alphabet.join(', ') + '}';
+  // --- ALPHABET DISPLAY ---
+  const alphabetStr = `Σ = { ${cfg.alphabet.join(', ')} }`;
   svg.appendChild(mk('text', {
-    x: BX+14, y: BY+BH/2, 'dominant-baseline':'central',
-    'font-family':'Courier Prime, monospace', 'font-size':'13',
-    'font-weight':'bold', fill:'#4a3b2c'
-  }, `REGEX: ${rawRegex}    ${alphabet}`));
+      x: 870, y: 25, 'text-anchor': 'end', 'dominant-baseline': 'central',
+      'font-family': 'Courier Prime, monospace', 'font-size': '16', 'font-weight': 'bold',
+      fill: '#53463c'
+  }, alphabetStr));
 
-  // ── Single-column production rules ──────────────────────────────────
   const rules   = cfg.rules;
-  const ROW_H   = 36;
-  const TOP     = BY + BH + 8;
-  const CARD_PAD = 10;
-  const COL_W   = 880;
-  const CHAR_W  = 9.6;
+  const ROW_H   = 44;   
+  const TOP     = 10;   
+  const CARD_PAD = 15;
+  const BX = 20;
 
-  // How many rows fit before we'd overflow (leave 32px for legend)
-  const MAX_VISIBLE = Math.floor((460 - TOP - 32) / ROW_H);
+  const MAX_VISIBLE = Math.floor((460 - TOP - 35) / ROW_H);
   const visibleRules = rules.slice(0, MAX_VISIBLE);
 
   visibleRules.forEach((row, i) => {
-    const cardX = BX;
     const cardY = TOP + i * ROW_H;
-    const cardH = ROW_H - 3;
-    const midY  = cardY + cardH / 2;
+    const midY  = cardY + ROW_H / 2;
 
     const isActive = (row.lhs === highlightLhs && row.rhs.includes(highlightRhs));
-    const isEven   = i % 2 === 0;
+    const isStart   = row.lhs === 'S';
 
-    // card bg
-    svg.appendChild(mk('rect', {
-      x: cardX, y: cardY, width: COL_W, height: cardH, rx: 4,
-      fill: isActive ? 'url(#cfg-active)' : (isEven ? 'url(#cfg-card)' : '#ffe6b3'),
-      stroke: isActive ? '#d35400' : '#d1cbbd',
-      'stroke-width': isActive ? '2.5' : '1.5'
-    }));
-    // inner highlight
-    svg.appendChild(mk('rect', {
-      x: cardX+1, y: cardY+1, width: COL_W-2, height: cardH-2, rx:3,
-      fill:'none', stroke: isActive ? 'rgba(255,200,100,0.6)' : 'rgba(255,255,255,0.6)',
-      'stroke-width':'1'
-    }));
-
-    // active pulse marker (left edge bar)
     if (isActive) {
-      svg.appendChild(mk('rect', {
-        x: cardX, y: cardY, width: 5, height: cardH, rx:2,
-        fill:'#d35400'
-      }));
+       svg.appendChild(mk('rect', {
+         x: BX, y: cardY, width: 860, height: ROW_H, rx: 4,
+         fill: 'rgba(211, 84, 0, 0.08)' 
+       }));
+       svg.appendChild(mk('rect', {
+         x: BX - 8, y: cardY + 8, width: 6, height: ROW_H - 16, rx: 2,
+         fill: '#d35400'
+       }));
     }
 
-    // LHS badge
-    const isStart   = row.lhs === 'S';
+    // Ledger Lines
+    if (i < visibleRules.length) {
+        svg.appendChild(mk('line', {
+            x1: BX, y1: cardY + ROW_H, x2: BX + 860, y2: cardY + ROW_H,
+            stroke: 'rgba(140, 122, 107, 0.25)', 'stroke-width': '1.5'
+        }));
+    }
+
+    // LHS Key (Keeps the Skeuomorphic 3D Style so it looks like a row label)
     const badgeCol  = isActive ? '#d35400' : (isStart ? '#d35400' : '#8c7a6b');
-    const badgeFill = isActive ? '#fff0db' : (isStart ? '#fff0db' : '#f4f1ea');
+    const badgeFill = isActive ? '#fff0db' : (isStart ? '#fff0db' : '#fdfcfb');
+    
     svg.appendChild(mk('rect', {
-      x: cardX+CARD_PAD, y: cardY+4, width:38, height:cardH-8, rx:4,
-      fill: badgeFill, stroke: badgeCol, 'stroke-width': (isStart||isActive)?'2':'1.5'
+      x: BX + CARD_PAD, y: cardY + 10, width: 42, height: 28, rx: 6,
+      fill: '#d1cbbd'
     }));
+    svg.appendChild(mk('rect', {
+      x: BX + CARD_PAD, y: cardY + 8, width: 42, height: 28, rx: 6,
+      fill: badgeFill, stroke: badgeCol, 'stroke-width': (isStart||isActive)?'2':'1'
+    }));
+    
     svg.appendChild(mk('text', {
-      x: cardX+CARD_PAD+19, y: midY,
+      x: BX + CARD_PAD + 21, y: midY - 1, 
       'text-anchor':'middle', 'dominant-baseline':'central',
-      'font-family':'Courier Prime, monospace', 'font-size':'17', 'font-weight':'bold',
+      'font-family':'Courier Prime, monospace', 'font-size':'20', 'font-weight':'bold',
       fill: badgeCol
     }, row.lhs));
 
-    // arrow
+    // Arrow
     svg.appendChild(mk('text', {
-      x: cardX+CARD_PAD+52, y: midY, 'dominant-baseline':'central',
-      'font-family':'Courier Prime, monospace', 'font-size':'18',
-      fill:'#b07a30', 'font-weight':'bold'
+      x: BX + CARD_PAD + 60, y: midY, 'dominant-baseline':'central',
+      'font-family':'Courier Prime, monospace', 'font-size':'22',
+      fill:'#6b5b51', 'font-weight':'bold'
     }, '\u2192'));
 
     // RHS tokens
     const productionStr = row.rhs.join('  |  ');
     const tokens = productionStr.split(/(\s+)/);
-    let cx = cardX + CARD_PAD + 76;
+    let cx = BX + CARD_PAD + 90;
 
     for (const tok of tokens) {
       if (!tok) continue;
-      if (tok.trim() === '') { cx += tok.length * (CHAR_W * 0.45); continue; }
+      if (tok.trim() === '') { cx += 8; continue; } // Space width
       const t       = tok.trim();
       const isVar   = /^[A-Z][']*$/.test(t);
       const isSep   = t === '|';
       const isLambda= t === '\u039b';
 
-      // highlight the specific matching production when active
       const isMatchProd = isActive && !isSep &&
         row.rhs.some(r => r === highlightRhs && r.split(' ').includes(t));
 
-      let fill, fw;
-      if (isSep)         { fill = '#b07a30'; fw = 'bold'; }
-      else if (isLambda) { fill = '#8c7a6b'; fw = 'normal'; }
-      else if (isVar)    { fill = isMatchProd ? '#d35400' : '#1a6e3d'; fw = 'bold'; }
-      else               { fill = isMatchProd ? '#a04000' : '#2c5f9e'; fw = 'normal'; }
+      let fillCol, fw;
+      if (isSep)         { fillCol = '#a39587'; fw = 'bold'; }
+      else if (isLambda) { fillCol = '#6b5c4f'; fw = 'normal'; }
+      else if (isVar)    { fillCol = isMatchProd ? '#d35400' : '#026135e9'; fw = 'bold'; } 
+      else               { fillCol = isMatchProd ? '#a04000' : '#071166'; fw = 'bold'; } 
+
+      // Flat, subtle highlight logic
+      const charWidth = 12;
+      const padding = isVar ? 14 : 0; 
+      const elementWidth = (t.length * charWidth) + padding;
 
       if (isVar) {
+        // Flat typewriter "ink stamp" highlight (NO 3D SHADOWS)
         svg.appendChild(mk('rect', {
-          x: cx-3, y: midY-10, width: t.length*CHAR_W+6, height:20, rx:3,
-          fill: isMatchProd ? '#ffe0b2' : '#e8f5ee', stroke:'none'
+          x: cx, y: midY - 13, width: elementWidth, height: 26, rx: 4,
+          fill: isMatchProd ? 'rgba(211, 84, 0, 0.12)' : 'rgba(248, 233, 219, 0.55)',
+          stroke: isMatchProd ? '#d35400' : 'rgba(5, 53, 21, 0.68)', 'stroke-width': '1'
         }));
       }
 
       svg.appendChild(mk('text', {
-        x: cx, y: midY, 'dominant-baseline':'central',
-        'font-family':'Courier Prime, monospace',
-        'font-size':'16', 'font-weight':fw, fill,
-        stroke: isVar ? (isMatchProd?'#ffe0b2':'#e8f5ee') : 'none',
-        'stroke-width':'3', 'paint-order':'stroke'
-      }, tok));
+        x: cx + elementWidth / 2, y: midY, 
+        'text-anchor': 'middle', 'dominant-baseline': 'central',
+        'font-family': 'Courier Prime, monospace',
+        'font-size': '20', 'font-weight': fw, fill: fillCol
+      }, t));
 
-      cx += tok.length * CHAR_W;
+      cx += elementWidth + 8; // Advance exactly past the text
     }
   });
 
-  // ── Legend bar ───────────────────────────────────────────────────────
-  const legY = TOP + visibleRules.length * ROW_H + 4;
-  const legH = 26;
-  svg.appendChild(mk('rect', {
-    x:10, y:legY, width:880, height:legH, rx:4,
-    fill:'#ffcc80', stroke:'#d1cbbd', 'stroke-width':'1.5', filter:'url(#inset-sh)'
-  }));
+// ── Legend (Anchored to the bottom, bigger font) ──────────────────
+  // The SVG canvas height is 460, so 435 puts this perfectly at the bottom edge
+  const legY = 435; 
+
   const legendItems = [
-    { color:'#d35400', label:'S = Start variable' },
+    { color:'#d35400', label:'S = Start' },
     { color:'#1a6e3d', label:'UPPER = Variables'  },
     { color:'#2c5f9e', label:'lower = Terminals'  },
-    { color:'#8c7a6b', label:'\u039b = \u03b5 (empty)' },
-    { color:'#d35400', label:'\u25ae = Active rule' },
+    { color:'#8c7a6b', label:'\u039b = Empty' },
+    { color:'#d35400', label:'\u25ae = Active' },
   ];
-  let lx = 22;
+  
+  let lx = BX + 10;
   for (const item of legendItems) {
-    svg.appendChild(mk('circle', { cx:lx+5, cy:legY+legH/2, r:'5', fill:item.color }));
+    // Slightly bigger dot (r: 6) to match the new text
+    svg.appendChild(mk('circle', { cx: lx + 6, cy: legY, r: '6', fill: item.color }));
+    
+    // Increased font size to 18
     svg.appendChild(mk('text', {
-      x:lx+14, y:legY+legH/2, 'dominant-baseline':'central',
-      'font-family':'Courier Prime, monospace', 'font-size':'11.5', fill:'#4a3b2c'
+      x: lx + 18, y: legY, 'dominant-baseline': 'central',
+      'font-family': 'Courier Prime, monospace', 'font-size': '18', 'font-weight': 'bold', fill: '#6b5a48'
     }, item.label));
-    lx += item.label.length * 7.2 + 22;
+    
+    // Increased horizontal spacing multiplier to account for the wider font
+    lx += item.label.length * 11 + 35; 
   }
 }
 
@@ -949,6 +924,15 @@ function drawState(svg, state, isActive, accepted, rejected) {
   else if (isActive && rejected)  { fill = '#fff0f0'; stroke = '#ff4d4f'; txtCol = '#a8071a';    }
   else if (isActive)              { fill = '#ffffff'; stroke = '#d35400'; txtCol = '#d35400'; }
   else if (state.accept)          {                   stroke = '#237804'; txtCol = '#237804'; }
+
+  // --- THE RESTORED START ARROW ---
+  if (state.start) {
+    svg.appendChild(svgEl('line', {
+      x1: state.x - R - 24, y1: state.y,
+      x2: state.x - R - 2,  y2: state.y,
+      stroke: '#8c7a6b', 'stroke-width': '2', 'marker-end': 'url(#m-default)'
+    }));
+  }
 
   svg.appendChild(svgEl('circle', {
     cx: state.x, cy: state.y, r: R,

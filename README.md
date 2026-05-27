@@ -2,22 +2,12 @@
 
 Contains all files for the compiler program of Group 7 for final output requirements
 
-## How to Run Locally
+## Reg Ex Covered:
 
-1. **Clone the repository:**
-   git clone https://github.com/yourusername/your-repo-name.git
+(bab)*(b|a)(bab|aba)(a|b)*(aa|bb)*(b|a|bb)(a|b)*(aa|bb)
 
-2. **Install backend dependencies:**
-   Make sure you have Python installed, then run:
-   pip install -r requirements.txt
+(1|0)*(11|00)(00|11)*(1|0|11)(1|0|11)*(101|111)(101|111)*(1|0*|11)(1|0*|11)
 
-3. **Start the Flask Server:**
-   python app.py
-   
-   The server will start running on http://localhost:5000.
-
-4. **Launch the Interface:**
-   Open the index.html file in any modern web browser.
 
 ## Members (Group 5)
 

@@ -1,16 +1,19 @@
-# Group-5-Automata-Regex-Compiler-Program
+# G5 Automata & Regex Compiler Simulator
 
-Contains all files for the compiler program of Group 7 for final output requirements
+A fully interactive, skeuomorphic web application built for visualizing and simulating Deterministic Finite Automata (DFA), Pushdown Automata (PDA), and Context-Free Grammars (CFG). Built for final output requirements in BCS34.
 
-## Reg Ex Covered:
+🚀 **Live Deployment:** https://g5-automata-simulator.vercel.app
 
-(bab)*(b|a)(bab|aba)(a|b)*(aa|bb)*(b|a|bb)(a|b)*(aa|bb)
+## Features
+* **Live Step-by-Step Tracing:** Watch the automata evaluate strings character by character across the machine states.
+* **CFG Derivation Ledger:** Step through grammar expansions line by line.
+* **Three Machine Modes:** Seamlessly switch between DFA, CFG, and PDA environments using a shared Python/Flask backend and an interactive JS/SVG frontend.
 
-(1|0)*(11|00)(00|11)*(1|0|11)(1|0|11)*(101|111)(101|111)*(1|0*|11)(1|0*|11)
-
+## Regular Expressions Covered:
+1. `(bab)*(b|a)(bab|aba)(a|b)*(aa|bb)*(b|a|bb)(a|b)*(aa|bb)`
+2. `(1|0)*(11|00)(00|11)*(1|0|11)(1|0|11)*(101|111)(101|111)*(1|0*|11)(1|0*|11)`
 
 ## Members (Group 5)
-
 * Gem Eirien A. Capistrano
 * Joseph Christian C. Cinco
 * John Michael D. Kamantigue

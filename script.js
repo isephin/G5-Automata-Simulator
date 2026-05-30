@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════
 // State & Variables
 // ════════════════════════════════════════════
-const API = 'http://localhost:5000/api'
+const API = '/api'
 const R   = 24;   
 let visitedTransitions = new Set();
 let dfas      = {};     
@@ -11,6 +11,8 @@ let traceData = null;
 let animStep  = -1;     
 let animTimer = null;   
 let currentMode = 'DFA';
+let pdas = {};
+let pdaKeys = [];
 
 // ── Pan & Zoom state ──
 let vpX = 0, vpY = 0, vpScale = 1;
@@ -32,12 +34,19 @@ let activeIndex = -1;
 // ════════════════════════════════════════════
 async function boot() {
   try {
+    // 1. Fetch DFAs
     const res = await fetch(API + '/dfas');
     dfas = await res.json();
     dfaKeys = Object.keys(dfas);
+    
+    // 2. Fetch PDAs
+    const resPda = await fetch(API + '/pdas');
+    pdas = await resPda.json();
+    pdaKeys = Object.keys(pdas);
+    
     selectDfa(dfaKeys[0], false);
 
-    // Pre-load CFG samples so they appear immediately on launch
+    // 3. Pre-load CFGs
     const ok = await loadCfgs();
     if (ok) {
       const key = currentId || Object.keys(cfgs)[0];
@@ -45,9 +54,7 @@ async function boot() {
       if (cfg && cfg.samples && cfg.samples.length > 0) {
         const isEmpty = listData.every(d => d.text === '');
         if (isEmpty) {
-          listData = Array(6).fill(null).map((_, i) => ({
-            text: cfg.samples[i] || '', status: null
-          }));
+          listData = Array(6).fill(null).map((_, i) => ({ text: cfg.samples[i] || '', status: null }));
           activeIndex = -1;
           renderList();
         }
@@ -96,9 +103,9 @@ async function drawCFG(highlightLhs = null, highlightRhs = null) {
   const cfg = cfgs[key];
   if (!cfg) { showError('No CFG found for ' + key); return; }
 
-  const svg = document.getElementById('automaton');
+const svg = document.getElementById('automaton');
   svg.innerHTML = '';
-  svg.setAttribute('viewBox', '0 0 900 460');
+  svg.setAttribute('viewBox', currentMode === 'PDA' ? '150 0 1100 700' : '0 0 900 460');
   hideError();
 
   const NS = 'http://www.w3.org/2000/svg';
@@ -358,74 +365,75 @@ async function handleCfgSimulate(index) {
   }, 700);
 }
 
+// --- ADD THESE UTILITIES JUST IN CASE THEY ARE MISSING ---
+function showError(msg) {
+  const el = document.getElementById('error-msg');
+  if (el) { el.textContent = msg; el.classList.add('show'); }
+}
+function hideError() {
+  const el = document.getElementById('error-msg');
+  if (el) el.classList.remove('show');
+}
+
+// ════════════════════════════════════════════
+// Core Navigation & Mode Switching
+// ════════════════════════════════════════════
 window.setMode = function(mode) {
   currentMode = mode;
   
-  // 1. Update active button styles
+  // 1. Update Buttons
   document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('btn-' + mode).classList.add('active');
   
-  // 2. Update the LED lights
+  // 2. Update LEDs
   document.getElementById('led-DFA').className = 'led';
   document.getElementById('led-PDA').className = 'led';
   document.getElementById('led-CFG').className = 'led';
   document.getElementById('led-' + mode).classList.add('led-green');
   
-  // 3. Set the correct full title based on the mode
+  // 3. Update Title
   let fullTitle = '';
   if (mode === 'DFA') fullTitle = 'Deterministic Finite Automaton (DFA)';
   else if (mode === 'CFG') fullTitle = 'Context-Free Grammar (CFG)';
   else if (mode === 'PDA') fullTitle = 'Pushdown Automaton (PDA)';
-  
   document.getElementById('diagram-title-text').textContent = fullTitle;
   
+  hideError();
+  
+  // 4. Render the correct screen
   if (mode === 'CFG') {
     resetAnim();
-    hideError();
-    // drawCFG loads cfgs; after that, pre-fill samples
     drawCFG().then(() => {
       const key = currentId || Object.keys(cfgs)[0];
-      const cfg = cfgs[key];
-      if (cfg && cfg.samples && cfg.samples.length > 0) {
-        // Only pre-fill if list is currently empty
-        const isEmpty = listData.every(d => d.text === '');
-        if (isEmpty) {
-          listData = Array(6).fill(null).map((_, i) => ({
-            text: cfg.samples[i] || '', status: null
-          }));
-          activeIndex = -1;
-          renderList();
-        }
+      if (cfgs[key] && cfgs[key].samples && listData.every(d => d.text === '')) {
+        listData = Array(6).fill(null).map((_, i) => ({ text: cfgs[key].samples[i] || '', status: null }));
+        activeIndex = -1; renderList();
       }
     });
-  } else if (mode !== 'DFA') {
-    document.getElementById('automaton').innerHTML = '';
-    showError(mode + ' logic is not connected to Python yet!');
   } else {
-    hideError();
-    if(currentId) selectDfa(currentId, true); 
+    // Both DFA and PDA share diagram logic
+    if (currentId) selectDfa(currentId, true); 
   }
 }
 
 function selectDfa(id, keepList = false) {
   currentId = id;
   resetViewport();
-  const dfa = dfas[currentId];
   
-  let regexStr = dfa.description.replace(/\|/g, "+");
-  regexStr = regexStr.replace(/\(/g, '<wbr>(').replace(/\)/g, ')<wbr>');
-  document.getElementById('regex-display').innerHTML = regexStr;
+  // Grab from PDAS if in PDA mode, otherwise DFAS
+  const machineDict = currentMode === 'PDA' ? pdas : dfas;
+  const machine = machineDict[currentId];
   
-  if(!keepList) { 
+  // Safely update the top orange banner
+  if (machine && machine.description) {
+      let regexStr = machine.description.replace(/\|/g, "+");
+      regexStr = regexStr.replace(/\(/g, '<wbr>(').replace(/\)/g, ')<wbr>');
+      document.getElementById('regex-display').innerHTML = regexStr;
+  }
+  
+  if (!keepList) { 
     activeIndex = -1; 
-    listData = [
-      { text: "", status: null }, 
-      { text: "", status: null },
-      { text: "", status: null },
-      { text: "", status: null },
-      { text: "", status: null },
-      { text: "", status: null }
-    ];
+    listData = Array(6).fill(null).map(() => ({ text: "", status: null }));
   }
   
   resetAnim();
@@ -434,36 +442,32 @@ function selectDfa(id, keepList = false) {
 }
 
 window.toggleDFA = function() {
-  if (dfaKeys.length === 0) return;
-  let idx = dfaKeys.indexOf(currentId);
-  idx = (idx + 1) % dfaKeys.length;
+  const keys = currentMode === 'PDA' ? pdaKeys : dfaKeys;
+  if (keys.length === 0) return;
+  let idx = keys.indexOf(currentId);
+  idx = (idx + 1) % keys.length;
+  
   if (currentMode === 'CFG') {
-    // In CFG mode: update currentId first, then load samples, then redraw
-    selectDfa(dfaKeys[idx], true);  // sets currentId, keeps listData
-    // loadCfgs() is cached after first call — await it to be safe
+    selectDfa(dfaKeys[idx], true);  
     loadCfgs().then(() => {
       const key = dfaKeys[idx];
       const cfg = cfgs[key];
       if (cfg && cfg.samples) {
-        listData = Array(6).fill(null).map((_, i) => ({
-          text: cfg.samples[i] || '', status: null
-        }));
+        listData = Array(6).fill(null).map((_, i) => ({ text: cfg.samples[i] || '', status: null }));
       } else {
         listData = Array(6).fill(null).map(() => ({ text: '', status: null }));
       }
       activeIndex = -1;
-      renderList();        // show samples immediately, don't wait for drawCFG
-      drawCFG();           // redraw grammar diagram in background
+      renderList();        
+      drawCFG();           
     });
   } else {
-    // Switch to the new DFA/PDA, but preserve or replace list with samples
-    const newId = dfaKeys[idx];
-    selectDfa(newId, true);  // keepList=true so selectDfa won't wipe it
-    const dfa = dfas[newId];
-    if (dfa && dfa.samples && dfa.samples.length > 0) {
-      listData = Array(6).fill(null).map((_, i) => ({
-        text: dfa.samples[i] || '', status: null
-      }));
+    const newId = keys[idx];
+    selectDfa(newId, true);  
+    const machineDict = currentMode === 'PDA' ? pdas : dfas;
+    const machine = machineDict[newId];
+    if (machine && machine.samples && machine.samples.length > 0) {
+      listData = Array(6).fill(null).map((_, i) => ({ text: machine.samples[i] || '', status: null }));
     } else {
       listData = Array(6).fill(null).map(() => ({ text: '', status: null }));
     }
@@ -472,6 +476,23 @@ window.toggleDFA = function() {
   }
 }
 
+function resetAnim() {
+  clearInterval(animTimer);
+  traceData = null;
+  animStep  = -1;
+  
+  if (typeof resetCfgAnim === 'function') {
+      resetCfgAnim();
+  }
+  
+  document.getElementById('trace-log').innerHTML = '— Waiting for input —';
+  
+  // Clear the green lines and redraw the base diagram for BOTH DFA and PDA
+  if (currentMode === 'DFA' || currentMode === 'PDA') {
+    visitedTransitions.clear();
+    drawDiagram(null, false, false);
+  }
+}
 // ════════════════════════════════════════════
 // Dynamic List Rendering
 // ════════════════════════════════════════════
@@ -601,10 +622,7 @@ window.handleSimulate = async function(index) {
     await handleCfgSimulate(index);
     return;
   }
-  if (currentMode !== 'DFA') {
-      showError("Switch to DFA mode to simulate strings!");
-      return;
-  }
+  if (currentMode !== 'DFA' && currentMode !== 'PDA') { return; }
   if (!listData[index] || listData[index].text === "") return;
 
   activeIndex = index;
@@ -646,30 +664,20 @@ window.handleSimulate = async function(index) {
   }, 600);
 }
 
-function resetAnim() {
-  clearInterval(animTimer);
-  traceData = null;
-  animStep  = -1;
-  resetCfgAnim();
-  document.getElementById('trace-log').innerHTML = '— Waiting for input —';
-  if (currentMode === 'DFA') {
-    drawDiagram(null, false, false);
-    visitedTransitions.clear();
-  }
-}
 
 async function fetchTrace(input) {
+  const endpoint = currentMode === 'PDA' ? '/pda/run' : '/run';
+  const bodyKey  = currentMode === 'PDA' ? 'pda_id' : 'dfa_id';
   try {
-    const res = await fetch(API + '/run', {
+    const res = await fetch(API + endpoint, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ dfa_id: currentId, input })
+      body:    JSON.stringify({ [bodyKey]: currentId, input })
     });
     if (!res.ok) { showError((await res.json()).error || 'Server error'); return null; }
     return await res.json();
   } catch (e) {
-    showError('Cannot reach Flask: ' + e.message);
-    return null;
+    showError('Cannot reach Flask: ' + e.message); return null;
   }
 }
 
@@ -681,10 +689,17 @@ function buildLog(data) {
   if (!data || !data.trace) return;
   
   logEl.innerHTML = data.trace.map((step, i) => {
-    if (i === 0) return `<div class="log-step" id="log-0">START → <b>${step.state}</b></div>`;
+    let stackHtml = '';
+    // If we are in PDA mode, render the stack!
+    if (currentMode === 'PDA' && step.stack) {
+       const stackContent = step.stack.length > 0 ? step.stack.join(', ') : 'Λ';
+       stackHtml = `<span style="color:#2c5f9e; margin-left: 10px;">[Stack: <b>${stackContent}</b>]</span>`;
+    }
+
+    if (i === 0) return `<div class="log-step" id="log-0">START → <b>${step.state}</b> ${stackHtml}</div>`;
     const prev = data.trace[i - 1].state;
     return `<div class="log-step" id="log-${i}">
-      read <b>'${step.symbol}'</b> → <b>${prev}</b> → <b>${step.state}</b>
+      read <b>'${step.symbol}'</b> → <b>${prev}</b> → <b>${step.state}</b> ${stackHtml}
     </div>`;
   }).join('');
 }
@@ -731,64 +746,148 @@ function svgEl(tag, attrs) {
 }
 
 function getPositions() {
-  const states = dfas[currentId].states;
+  const machineDict = currentMode === 'PDA' ? pdas : dfas;
+  const states = machineDict[currentId].states;
   if (states.length === 0) return [];
 
+  // --- NEW: PDA Flowchart Layouts ---
+  if (currentMode === 'PDA') {
+const PDA_LAYOUTS = {
+        // ── PDA "DFA 1" layout ────────────────────────────────────────
+        // Spine runs top→bottom down x=700.
+        // Left wing  (a-path: s_start→q3→q2→q8→q11) fans left.
+        // Right wing (b-path: s_start→q4→q5→q6→q10) fans right then loops.
+        // Bottom section (q13/q15/q16/q17 → q19–q24 → acc) spreads wide.
+        "DFA 1": {
+          // ── Start & Splitting ──
+          "s_start": { x: 100,  y: 500 },
+          "q4":      { x: 320,  y: 500 },
+          "q9":      { x: 540,  y: 500 }, // Reject for q4 and q12
+          "q3":      { x: 540,  y: 250 }, // Top path
+          "q5":      { x: 540,  y: 750 }, // Bottom path
+
+          // ── Top Branch ──
+          "q2":      { x: 760,  y: 250 },
+          "q1":      { x: 760,  y: 100 }, // Reject
+          "q8":      { x: 980,  y: 250 },
+          "q11":     { x: 1200, y: 250 },
+          "q14":     { x: 1420, y: 250 },
+
+          // ── Middle Convergence ──
+          "q12":     { x: 760,  y: 500 },
+          "q15":     { x: 980,  y: 500 },
+          "q18":     { x: 980,  y: 350 }, // Reject for q15
+
+          // ── Bottom Branch ──
+          "q6":      { x: 760,  y: 750 },
+          "q7":      { x: 760,  y: 900 }, // Reject
+          "q10":     { x: 980,  y: 750 },
+          "q13":     { x: 1200, y: 750 },
+          "q16":     { x: 1420, y: 650 },
+          "q17":     { x: 1420, y: 850 },
+
+          // ── Pre-Accept Cluster ──
+          "q19":     { x: 1640, y: 500 },
+          "q20":     { x: 1640, y: 750 },
+
+          // ── Accept Cluster ──
+          "q23":     { x: 1860, y: 250 }, // Top Outer
+          "q21":     { x: 1860, y: 450 }, // Top Inner
+          "q22":     { x: 1860, y: 650 }, // Bottom Inner
+          "q24":     { x: 1860, y: 850 }, // Bottom Outer
+
+          "acc":     { x: 2080, y: 550 },
+        },
+        // ── PDA "DFA 2" layout — symmetric grid/railroad ─────────────
+        // 5 vertical columns, evenly spaced at x = 160, 380, 600, 820, 1040
+        // Each row is 160px apart.  Left wing occupies cols 0-1, right wing
+        // cols 3-4, center spine col 2.  All wings run the same number of
+        // rows so the layout is a clean rectangle, not a triangle.
+        //
+        //  col:   0    1    2    3    4
+        //  row 0:           s_start
+        //  row 1: l3   l2   q1   r2   r3      (REJECT nodes at the far ends)
+        //  row 2: --   l1   q2   r1   --      (q2=REJECT, l1/r1 branch off q1)
+        //  row 3: --   l4   q3   r4   --      (q3=REJECT, wings' second nodes)
+        //  row 4: --   l5   q4   r5   --      (bottom dispatcher)
+        //  row 5: --   l6   --   r6   --      (wing tails that feed into q3)
+        //  row 6: --   bl1  q3   br1  --      (q3 = center-mid after wings merge)
+        //  row 7: --   bl2  q4   br2  --
+        //  row 8: --   --   bm1  --   --
+        //  row 9: --   --   bm2  --   --
+        //  row10: --   --   acc  --   --
+"DFA 2": {
+          // ── Center spine ──
+          "s_start": { x: 50,  y: 500 },
+          "q1":      { x: 280,  y: 500 },
+          
+          // ── Top Wing (1s path) ──
+          "q2":      { x: 460,  y: 250 },
+          "q3":      { x: 740,  y: 250 },
+          "q4":      { x: 1040, y: 250 },
+          "q5":      { x: 1340, y: 250 },
+          "q15":     { x: 1640, y: 250 },
+
+          // ── Bottom Wing (0s path) ──
+          "q6":      { x: 460,  y: 750 },
+          "q7":      { x: 740,  y: 750 },
+          "q8":      { x: 1040, y: 750 },
+          "q9":      { x: 1340, y: 750 },
+          "q14":     { x: 1640, y: 750 },
+
+          // ── Middle Connections / Convergences ──
+          "q10":     { x: 900,  y: 500 },
+          "q12":     { x: 1500, y: 500 },
+          "q13":     { x: 1200, y: 500 },
+
+          // ── Final Stretch ──
+          "q11":     { x: 1900, y: 350 },
+          "q16":     { x: 1900, y: 650 },
+
+          // ── Accept States ──
+          "acc_1":   { x: 2100, y: 500 }
+        }
+      };
+      const layout = PDA_LAYOUTS[currentId];
+      return states.map(s => ({ ...s, ...(layout && layout[s.id] ? layout[s.id] : { x: 450, y: 230 }) }));
+  }
+
+  // --- EXISTING: DFA Circular Layouts ---
   const LAYOUTS = {
-    // DFA 1 — 24 states (Symmetrical Valley Grid)
     "DFA 1": {
       "q0":                { x: 50,  y: 230 },
-
       "q1":                { x: 150, y: 130 },
       "q11":               { x: 150, y: 330 },
-
-      // Placed in the "valley" between column 2 and 3 so lines don't cross nodes!
       "trapstate_q2":      { x: 315, y: 60  }, 
       "q2":                { x: 260, y: 130 },
       "q12":               { x: 260, y: 230 },
       "q16":               { x: 260, y: 330 },
       "trapstate_q12_q16": { x: 315, y: 390 }, 
-
       "q3":                { x: 370, y: 130 },
       "q13":               { x: 370, y: 230 },
       "q17":               { x: 370, y: 330 },
-      
-      // Placed perfectly in the valley between column 3 and 4!
       "trapstate_q13_q17": { x: 425, y: 390 }, 
-
       "q4":                { x: 480, y: 130 },
       "q14":               { x: 480, y: 330 },
-
       "q5":                { x: 590, y: 70  },
       "q8":                { x: 590, y: 170 },
       "q15":               { x: 590, y: 290 },
       "q18":               { x: 590, y: 390 },
-
       "q6":                { x: 710, y: 70  },
       "q9":                { x: 710, y: 160 },
       "q7":                { x: 720, y: 250 },
       "q10":               { x: 720, y: 370 },
-
       "first_end_state":   { x: 850, y: 160 },
       "second_end_state":  { x: 850, y: 300 },
     },
-
-    // DFA 2 — 14 states (q0-q13) Symmetrical Grid Layout
     "DFA 2": {
-      "q0":  { x: 60,  y: 230 },
-      "q1":  { x: 190, y: 90  }, 
-      "q2":  { x: 190, y: 370 }, 
-      "q5":  { x: 320, y: 90  }, 
-      "q3":  { x: 320, y: 370 }, 
-      "q6":  { x: 450, y: 90  }, 
-      "q4":  { x: 450, y: 230 }, 
-      "q8":  { x: 450, y: 370 }, 
-      "q11": { x: 580, y: 90  }, 
-      "q7":  { x: 580, y: 230 }, 
-      "q12": { x: 580, y: 370 }, 
-      "q10": { x: 710, y: 90  }, 
-      "q9":  { x: 710, y: 370 }, 
-      "q13": { x: 840, y: 230 },
+      "q0":  { x: 60,  y: 230 },  "q1":  { x: 190, y: 90  }, 
+      "q2":  { x: 190, y: 370 },  "q5":  { x: 320, y: 90  }, 
+      "q3":  { x: 320, y: 370 },  "q6":  { x: 450, y: 90  }, 
+      "q4":  { x: 450, y: 230 },  "q8":  { x: 450, y: 370 }, 
+      "q11": { x: 580, y: 90  },  "q7":  { x: 580, y: 230 }, 
+      "q12": { x: 580, y: 370 },  "q10": { x: 710, y: 90  }, 
+      "q9":  { x: 710, y: 370 },  "q13": { x: 840, y: 230 },
     },
   };
 
@@ -800,24 +899,22 @@ function getPositions() {
 }
 
 function drawDiagram(activeId, accepted, rejected) {
-  if (!dfas[currentId] || currentMode !== 'DFA') return;
-  const svg = document.getElementById('automaton');
+  const machineDict = currentMode === 'PDA' ? pdas : dfas;
+  if (!machineDict[currentId] || (currentMode !== 'DFA' && currentMode !== 'PDA')) return;
+  
+const svg = document.getElementById('automaton');
   svg.innerHTML = '';
-  svg.setAttribute('viewBox', '0 0 900 460');
-  const dfa   = dfas[currentId];
-  const pos   = getPositions();
+  // UPDATE: Tightened width to 1850 to fit the screen better
+  svg.setAttribute('viewBox', currentMode === 'PDA' ? '0 0 2150 1095' : '0 0 900 460');
+  
+  const dfa = machineDict[currentId];
+  const pos = getPositions();
   const byId  = Object.fromEntries(pos.map(s => [s.id, s]));
 
   const defs = svgEl('defs', {});
-  for (const [id, color] of [
-    ['m-default', '#8c7a6b'],
-    ['m-active',  '#d35400'],
-    ['m-accept',  '#237804'],
-  ]) {
-    const m = svgEl('marker', { id, viewBox: '0 0 10 10', refX: '8', refY: '5',
-                                 markerWidth: '6', markerHeight: '6', orient: 'auto-start-reverse' });
-    m.appendChild(svgEl('path', { d: 'M2 1L8 5L2 9', fill: 'none',
-                                   stroke: color, 'stroke-width': '1.5', 'stroke-linecap': 'round' }));
+  for (const [id, color] of [['m-default', '#8c7a6b'], ['m-active', '#d35400'], ['m-accept', '#237804']]) {
+    const m = svgEl('marker', { id, viewBox: '0 0 10 10', refX: '8', refY: '5', markerWidth: '6', markerHeight: '6', orient: 'auto-start-reverse' });
+    m.appendChild(svgEl('path', { d: 'M2 1L8 5L2 9', fill: 'none', stroke: color, 'stroke-width': '1.5', 'stroke-linecap': 'round' }));
     defs.appendChild(m);
   }
   svg.appendChild(defs);
@@ -830,15 +927,15 @@ function drawDiagram(activeId, accepted, rejected) {
     activeTrans = { from: traceData.trace[animStep - 1].state, to: traceData.trace[animStep].state };
   }
 
-  // --- UNIVERSAL GROUPING LOGIC ---
   const groupedTransitions = {};
   for (const t of dfa.transitions) {
     const key = t.from + '->' + t.to;
-    if (!groupedTransitions[key]) {
-      groupedTransitions[key] = { from: t.from, to: t.to, labels: [] };
-    }
-    if (!groupedTransitions[key].labels.includes(t.label)) {
-       groupedTransitions[key].labels.push(t.label);
+    if (!groupedTransitions[key]) groupedTransitions[key] = { from: t.from, to: t.to, labels: [] };
+    
+    // Support DFA labels AND PDA read labels
+    const textLabel = t.label !== undefined ? t.label : (t.read || 'Λ');
+    if (!groupedTransitions[key].labels.includes(textLabel)) {
+       groupedTransitions[key].labels.push(textLabel);
     }
   }
 
@@ -863,9 +960,7 @@ function drawDiagram(activeId, accepted, rejected) {
 
 function drawLoop(svg, pos, label, color, marker, sw) {
   const lr = 18;
-  // --- GRAVITY LOOPS FIX ---
   const isBottom = pos.y > 300; 
-
   const startX = isBottom ? pos.x + lr : pos.x - lr;
   const endX   = isBottom ? pos.x - lr : pos.x + lr;
   const startY = isBottom ? pos.y + R : pos.y - R;
@@ -876,10 +971,8 @@ function drawLoop(svg, pos, label, color, marker, sw) {
   }));
   
   const textY = isBottom ? startY + lr * 1.5 + 4 : startY - lr * 1.5 - 2;
-  
   const t = svgEl('text', {
-    x: pos.x, y: textY,
-    'text-anchor': 'middle', 'dominant-baseline': 'central',
+    x: pos.x, y: textY, 'text-anchor': 'middle', 'dominant-baseline': 'central',
     fill: color, 'font-size': '16', 'font-family': 'monospace', 'font-weight': 'bold',
     stroke: '#ffedb3', 'stroke-width': '4', 'paint-order': 'stroke'
   });
@@ -903,63 +996,78 @@ function drawArrow(svg, transitions, from, to, label, color, marker, sw) {
   const dist = Math.sqrt(dx * dx + dy * dy);
   const ux = dx / dist, uy = dy / dist;
   const nx = -uy, ny = ux;
-  const sx = from.x + ux * R, sy = from.y + uy * R;
-  const ex = to.x   - ux * R, ey = to.y   - uy * R;
 
-  // ══════════════════════════════════════
-  // UNIVERSAL UPGRADED MATH
-  // ══════════════════════════════════════
-  let offset = hasReverse ? 30 : 0; 
-  
-  if (offset === 0) {
-    const CLEAR = R + 10;
-    for (const s of pos) {
-      if (s.id === from.id || s.id === to.id) continue;
-      const d = linePointDist(sx, sy, ex, ey, s.x, s.y);
-      if (d < CLEAR) {
-        const cross = (to.x - from.x) * (s.y - from.y) - (to.y - from.y) * (s.x - from.x);
-        const arcSide = cross > 0 ? 1 : -1;
-        const needed = Math.ceil((CLEAR - d) / 10) * 18;
-        if (Math.abs(needed * arcSide) > Math.abs(offset)) {
-          offset = needed * arcSide;
+  // THE MAGIC FIX: Exact edge detection so arrows don't hide under shapes
+  function shapeR(state) {
+    if (currentMode !== 'PDA') return R;
+    const sh = state.shape || 'circle';
+    
+    // Snaps to the edge of the new giant diamonds
+    if (sh === 'diamond') return 1 / (Math.abs(ux) / 85 + Math.abs(uy) / 50) + 12; 
+    // Snaps to the edge of the new giant ovals
+    if (sh === 'oval')    return 1 / Math.sqrt((ux * ux) / (85 * 85) + (uy * uy) / (40 * 40)) + 12;
+    return 50; 
+  }
+
+  const sx = from.x + ux * shapeR(from), sy = from.y + uy * shapeR(from);
+  const ex = to.x   - ux * shapeR(to),   ey = to.y   - uy * shapeR(to);
+
+  let offset = hasReverse ? 30 : 0;
+
+  if (currentMode === 'DFA') {
+    if (offset === 0) {
+      const CLEAR = R + 10;
+      for (const s of pos) {
+        if (s.id === from.id || s.id === to.id) continue;
+        const d = linePointDist(sx, sy, ex, ey, s.x, s.y);
+        if (d < CLEAR) {
+          const cross = (to.x - from.x) * (s.y - from.y) - (to.y - from.y) * (s.x - from.x);
+          const arcSide = cross > 0 ? 1 : -1;
+          const needed = Math.ceil((CLEAR - d) / 10) * 18;
+          if (Math.abs(needed * arcSide) > Math.abs(offset)) offset = needed * arcSide;
         }
       }
     }
+    const ARC_OVERRIDES = {
+      "DFA 1": {
+        "q7->q10": 45, "q10->q7": 45, "q13->trapstate_q13_q17": 0, "q12->trapstate_q12_q16": 0,
+        "q18->q7": -50, "q9->q10": -90, "q6->q7": -65, "q5->q7": -20, "q15->q7": -45, "q10->q7": 0,
+        "q9->first_end_state": -40, "first_end_state->q7": -60, "first_end_state->q10": -40, "second_end_state->q7": 60
+      },
+      "DFA 2": { "q8->q11": -50, "q12->q11": 70, "q12->q3": 90 }
+    };
+    const overrideKey = from.id + '->' + to.id;
+    if (ARC_OVERRIDES[currentId] && ARC_OVERRIDES[currentId][overrideKey] !== undefined) {
+      offset = ARC_OVERRIDES[currentId][overrideKey];
+    }
+  } else {
+    // PDA arcs
+// PDA arcs
+    const PDA_ARC_OVERRIDES = {
+      "DFA 1": {
+        "q23->q22": -190,  // Curves outward to bypass q21
+        "q24->q21": -190, // Curves outward to bypass q22
+        "q21->q22": 40, 
+        "q16->q21": 80,
+        "q14->q22": 250,
+        "q22->q21": 40    // Slight curve between the inner nodes
+      },
+"DFA 2": {
+        // Massive return jumps spanning across multiple states
+        "l6->l2":   250, // Swings way up over the top
+        "r6->r2":  -250, // Swings way down under the bottom
+        
+        // Jumps to Accept state curving around the inner nodes
+        "l6->acc": -150, 
+        "r6->acc":  150
+      }
+    };
+    const pdaOverrideKey = from.id + '->' + to.id;
+    if (PDA_ARC_OVERRIDES[currentId] && PDA_ARC_OVERRIDES[currentId][pdaOverrideKey] !== undefined) {
+      offset = PDA_ARC_OVERRIDES[currentId][pdaOverrideKey];
+    }
   }
 
-  // Independent overrides based on current DFA mode
-const ARC_OVERRIDES = { 
-    "DFA 1": { 
-        "q7->q10": 45, 
-        "q10->q7": 45,  
-
-        // --- Your New Custom Curves ---
-        "q13->trapstate_q13_q17": 0, // Bends q13 to trapstate outward
-        "q12->trapstate_q12_q16": 0, // Bends q12 to trapstate outward
-        "q18->q7": -50,               // Sweeps q18 up to q7 from the left
-        "q9->q10": -90,                // Bows q10 to q9 wide around the center traffic
-        "q6->q7": -65,
-        "q5->q7": -20,
-        "q15->q7": -45,
-        "q10->q7": 0,
-        "q9->first_end_state": -40,                
-        "first_end_state->q7": -60,
-        "first_end_state->q10": -40,   
-        "second_end_state->q7": 60    // Sweeps the bottom final state smoothly back to q7
-    },
-    "DFA 2": { 
-        "q8->q11": -50, 
-        "q12->q11": 70, 
-        "q12->q3": 90 
-    } 
-  };
-  
-  const overrideKey = from.id + '->' + to.id;
-  const activeArcs = ARC_OVERRIDES[currentId] || {};
-  if (activeArcs[overrideKey] !== undefined) {
-      offset = activeArcs[overrideKey];
-  }
-  
   const mx = (sx + ex) / 2 + nx * offset;
   const my = (sy + ey) / 2 + ny * offset;
 
@@ -968,40 +1076,71 @@ const ARC_OVERRIDES = {
     fill: 'none', stroke: color, 'stroke-width': sw, 'marker-end': `url(#${marker})`
   }));
 
-  const TEXT_OVERRIDES = { 
-      "DFA 1": { 
-          "q2->q3": { x: 0, y: -15 }, 
-          "q12->q13": { x: 0, y: -15 },
-          "q16->q17": { x: 0, y: -15 } 
-      },
-      "DFA 2": { "q4->q7": { x: 0, y: 0 } } 
+  const TEXT_OVERRIDES = {
+    "DFA 1": { "q2->q3": { x: 0, y: -15 }, "q12->q13": { x: 0, y: -15 }, "q16->q17": { x: 0, y: -15 } },
+    "DFA 2": { "q4->q7": { x: 0, y: 0 } }
   };
-  
   let tOffX = 0, tOffY = 0;
-  const activeTexts = TEXT_OVERRIDES[currentId] || {};
-  if (activeTexts[overrideKey]) {
-    tOffX = activeTexts[overrideKey].x;
-    tOffY = activeTexts[overrideKey].y;
+  const overrideKeyForText = from.id + '->' + to.id;
+  if (TEXT_OVERRIDES[currentId] && TEXT_OVERRIDES[currentId][overrideKeyForText]) {
+    tOffX = TEXT_OVERRIDES[currentId][overrideKeyForText].x;
+    tOffY = TEXT_OVERRIDES[currentId][overrideKeyForText].y;
   }
 
- // --- CENTERED TEXT MATH ---
   const midX = 0.25 * sx + 0.5 * mx + 0.25 * ex;
   const midY = 0.25 * sy + 0.5 * my + 0.25 * ey;
-  
-  const textDist = 0; 
-  
-  const lx = midX + nx * textDist + tOffX;
-  const ly = midY + ny * textDist + tOffY;
+  const lx = midX + tOffX;
+  const ly = midY + tOffY;
+
+const arrowFontSize = currentMode === 'PDA' ? '24' : '16';
+  const arrowStrokeW  = currentMode === 'PDA' ? '6' : '4';
 
   const t = svgEl('text', {
-    x: lx, y: ly, 
-    'text-anchor': 'middle', 'dominant-baseline': 'central', 
-    fill: color, 'font-size': '16', 'font-family': 'monospace', 'font-weight': 'bold',
-    stroke: '#ffedb3', 'stroke-width': '4', 'paint-order': 'stroke'
+    x: lx, y: ly,
+    'text-anchor': 'middle', 'dominant-baseline': 'central',
+    fill: color, 'font-size': arrowFontSize, 'font-family': 'monospace', 'font-weight': 'bold',
+    stroke: '#ffedb3', 'stroke-width': arrowStrokeW, 'paint-order': 'stroke'
   });
   t.textContent = label;
   svg.appendChild(t);
 }
+
+function linePointDist(sx, sy, ex, ey, px, py) {
+  const dx = ex - sx, dy = ey - sy;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(px - sx, py - sy);
+  let t = ((px - sx) * dx + (py - sy) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - sx - t * dx, py - sy - t * dy);
+}
+
+function drawLoop(svg, pos, label, color, marker, sw) {
+  const lr = 18;
+  const isBottom = pos.y > 300; 
+  const startX = isBottom ? pos.x + lr : pos.x - lr;
+  const endX   = isBottom ? pos.x - lr : pos.x + lr;
+  const startY = isBottom ? pos.y + R : pos.y - R;
+
+  // Make the loop line thicker for PDA mode
+  const finalStrokeWidth = currentMode === 'PDA' ? (parseFloat(sw) * 1.5).toString() : sw;
+
+  svg.appendChild(svgEl('path', {
+    d: `M${startX} ${startY} A${lr} ${lr} 0 1 1 ${endX} ${startY}`,
+    fill: 'none', stroke: color, 'stroke-width': finalStrokeWidth, 'marker-end': `url(#${marker})`
+  }));
+  
+
+  const fontSize = currentMode === 'PDA' ? '24' : '16';
+  const textY = isBottom ? startY + lr * 1.5 + (currentMode === 'PDA' ? 12 : 4) : startY - lr * 1.5 - (currentMode === 'PDA' ? 10 : 2);
+  const t = svgEl('text', {
+    x: pos.x, y: textY, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+    fill: color, 'font-size': fontSize, 'font-family': 'monospace', 'font-weight': 'bold',
+    stroke: '#ffedb3', 'stroke-width': currentMode === 'PDA' ? '8' : '4', 'paint-order': 'stroke'
+  });
+  t.textContent = label;
+  svg.appendChild(t);
+}
+
 
 function drawState(svg, state, isActive, accepted, rejected) {
   let fill = '#ffe6b3', stroke = '#8c7a6b', txtCol = '#4a3b2c';
@@ -1010,43 +1149,55 @@ function drawState(svg, state, isActive, accepted, rejected) {
   else if (isActive)              { fill = '#ffffff'; stroke = '#d35400'; txtCol = '#d35400'; }
   else if (state.accept)          {                   stroke = '#237804'; txtCol = '#237804'; }
 
-  // --- THE RESTORED START ARROW ---
-  if (state.start) {
-    svg.appendChild(svgEl('line', {
-      x1: state.x - R - 24, y1: state.y,
-      x2: state.x - R - 2,  y2: state.y,
-      stroke: '#8c7a6b', 'stroke-width': '2', 'marker-end': 'url(#m-default)'
+const shape = state.shape || 'circle';
+  const isPDA = currentMode === 'PDA';
+
+  if (shape === 'diamond') {
+    const rx = isPDA ? 85 : 45;   // Increased from 58
+    const ry = isPDA ? 50 : 30;   // Increased from 38
+    const pts = `${state.x},${state.y - ry} ${state.x + rx},${state.y} ${state.x},${state.y + ry} ${state.x - rx},${state.y}`;
+    svg.appendChild(svgEl('polygon', {
+      points: pts,
+      fill, stroke, 'stroke-width': isActive ? '3' : '2'
     }));
-  }
-
-  svg.appendChild(svgEl('circle', {
-    cx: state.x, cy: state.y, r: R,
-    fill, stroke, 'stroke-width': isActive ? '3' : '2'
-  }));
-
-  if (state.accept) {
+  } else if (shape === 'oval') {
+    const orx = isPDA ? 85 : 45;  // Increased from 58
+    const ory = isPDA ? 40 : 22;  // Increased from 28
+    svg.appendChild(svgEl('ellipse', {
+      cx: state.x, cy: state.y, rx: orx, ry: ory,
+      fill, stroke, 'stroke-width': isActive ? '3' : '2'
+    }));
+  } else {
+    // --- Circle (used by PDA circles too) ---
+    const r = isPDA ? 40 : R;     // Increased from 28
+    if (state.start) {
+      svg.appendChild(svgEl('line', {
+        x1: state.x - r - (isPDA ? 35 : 24), y1: state.y, // Extended line for bigger circle
+        x2: state.x - r - 2,  y2: state.y,
+        stroke: '#8c7a6b', 'stroke-width': '2', 'marker-end': 'url(#m-default)'
+      }));
+    }
     svg.appendChild(svgEl('circle', {
-      cx: state.x, cy: state.y, r: R - 6,
-      fill: 'none', stroke: isActive ? stroke : '#237804', 'stroke-width': '2'
+      cx: state.x, cy: state.y, r: r,
+      fill, stroke, 'stroke-width': isActive ? '3' : '2'
     }));
+    if (state.accept) {
+      svg.appendChild(svgEl('circle', {
+        cx: state.x, cy: state.y, r: r - 6,
+        fill: 'none', stroke: isActive ? stroke : '#237804', 'stroke-width': '2'
+      }));
+    }
   }
 
+  // UPDATE: Adjust font size for the new massive shapes
+  const fontSize = isPDA ? '24' : ((shape === 'circle') ? '16' : '14');
   const t = svgEl('text', {
     x: state.x, y: state.y,
     'text-anchor': 'middle', 'dominant-baseline': 'central',
-    fill: txtCol, 'font-size': '16', 'font-weight': 'bold', 'font-family': 'monospace'
+    fill: txtCol, 'font-size': fontSize, 'font-weight': 'bold', 'font-family': 'monospace'
   });
   t.textContent = state.label;
   svg.appendChild(t);
-}
-
-function showError(msg) {
-  const el = document.getElementById('error-msg');
-  el.textContent = msg;
-  el.classList.add('show');
-}
-function hideError() {
-  document.getElementById('error-msg').classList.remove('show');
 }
 
 // ════════════════════════════════════════════
@@ -1136,16 +1287,19 @@ window.openModal = function(type) {
   const titleEl = document.getElementById('modal-title');
   const contentEl = document.getElementById('modal-content');
   
+window.openModal = function(type) {
+  const titleEl = document.getElementById('modal-title');
+  const contentEl = document.getElementById('modal-content');
+  
   if (type === 'manual') {
       titleEl.textContent = ' Usage Manual ';
       contentEl.innerHTML = `
-          <p>Welcome to your <b>Automata Simulator</b>! Here is how to use this website:</p>
+          <p>Welcome to the <b>G5 Automata Simulator</b>! Here is how to operate the machine:</p>
           <ul>
-              <li><b>Power Up:</b> Make sure your Python backend (<code>app.py</code>) is running so the machine has a brain! </li>
-              <li><b>Choose Machine:</b> Select DFA, PDA, or CFG from the top buttons.</li>
-              <li><b>Toggle Logic:</b> Use the 'Change regex' switch to flip between different rule sets.</li>
-              <li><b>Load the Tape:</b> Type a string into the yellow input box and press <b>Enter</b> to queue it up. You can queue up to 6 strings.</li>
-              <li><b>Simulate:</b> Click the round button next to your string. Watch the tape head read each character while the diagram traces the path! </li>
+              <li><b>Choose Machine:</b> Select DFA, CFG, or PDA from the top control buttons.</li>
+              <li><b>Toggle Logic:</b> Use the 'Change regex' switch to flip between different pre-loaded rule sets.</li>
+              <li><b>Load the Tape:</b> Type a string into the yellow input box and press <b>Enter</b> to queue it up. You can test up to 6 strings at once.</li>
+              <li><b>Simulate:</b> Click the simulate button next to your string. Watch the tape head read each character while the diagram traces the exact path! </li>
           </ul>
           <p style="text-align:center; margin-top: 15px; color: #d35400;"><b>Green = Valid!  &nbsp;&nbsp;&nbsp; Red = Invalid! </b></p>
       `;

@@ -1287,10 +1287,6 @@ window.openModal = function(type) {
   const titleEl = document.getElementById('modal-title');
   const contentEl = document.getElementById('modal-content');
   
-window.openModal = function(type) {
-  const titleEl = document.getElementById('modal-title');
-  const contentEl = document.getElementById('modal-content');
-  
   if (type === 'manual') {
       titleEl.textContent = ' Usage Manual ';
       contentEl.innerHTML = `
@@ -1320,6 +1316,10 @@ window.openModal = function(type) {
   }
   
   document.getElementById('cute-modal').classList.add('show');
+}
+
+window.closeModal = function() {
+  document.getElementById('cute-modal').classList.remove('show');
 }
 
 window.closeModal = function() {

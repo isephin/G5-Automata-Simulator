@@ -1,6 +1,6 @@
 # G5 Automata & Regex Compiler Simulator
 
-A fully interactive, skeuomorphic web application built for visualizing and simulating Deterministic Finite Automata (DFA), Pushdown Automata (PDA), and Context-Free Grammars (CFG). Built for final output requirements in BCS34.
+A fully interactive, web application built for visualizing and simulating Deterministic Finite Automata (DFA), Pushdown Automata (PDA), and Context-Free Grammars (CFG). Built for final output requirements in BCS34.
 
 🚀 **Live Deployment:** https://g5-automata-simulator.vercel.app
 
